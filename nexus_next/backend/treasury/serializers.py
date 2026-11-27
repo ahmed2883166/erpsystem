@@ -242,3 +242,53 @@ class BankReconciliationSerializer(serializers.ModelSerializer):
         if bank and (bank.kind != TreasuryAccount.Kind.BANK or not bank.is_active):
             raise serializers.ValidationError({"bank_account": "اختر حسابًا بنكيًا نشطًا."})
         return attrs
+
+
+class TreasuryChequeSerializer(serializers.ModelSerializer):
+    bank_name = serializers.CharField(source="bank_account.name_ar", read_only=True)
+    transaction_number = serializers.CharField(source="treasury_transaction.document_number", read_only=True, default="")
+    class Meta:
+        model = TreasuryCheque
+        fields = (
+            "id", "company", "branch", "fiscal_year", "bank_account", "bank_name",
+            "direction", "cheque_number", "counterparty", "amount", "issue_date",
+            "due_date", "status", "treasury_transaction", "transaction_number",
+            "deposit_date", "clearing_date", "bounce_date", "notes", "created_at", "updated_at",
+        )
+        read_only_fields = ("status", "deposit_date", "clearing_date", "bounce_date", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        year = attrs.get("fiscal_year", getattr(self.instance, "fiscal_year", None))
+        bank = attrs.get("bank_account", getattr(self.instance, "bank_account", None))
+        direction = attrs.get("direction", getattr(self.instance, "direction", None))
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
+        due_date = attrs.get("due_date", getattr(self.instance, "due_date", None))
+        doc = attrs.get("treasury_transaction", getattr(self.instance, "treasury_transaction", None))
+        if company and branch and branch.company_id != company.pk:
+            raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if company and year and year.company_id != company.pk:
+            raise serializers.ValidationError({"fiscal_year": "السنة المالية لا تتبع الشركة."})
+        if bank and company and bank.company_id != company.pk:
+            raise serializers.ValidationError({"bank_account": "الحساب البنكي لا يتبع الشركة."})
+        if bank and (bank.kind != TreasuryAccount.Kind.BANK or not bank.is_active):
+            raise serializers.ValidationError({"bank_account": "اختر حسابًا بنكيًا نشطًا."})
+        if bank and company and bank.currency_code != company.base_currency.code:
+            raise serializers.ValidationError({"bank_account": "دورة الشيكات متاحة بالعملة الأساسية فقط حاليًا."})
+        if bank and branch and bank.branch_id and bank.branch_id != branch.pk:
+            raise serializers.ValidationError({"branch": "فرع الشيك لا يطابق فرع الحساب البنكي."})
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({"amount": "قيمة الشيك يجب أن تكون أكبر من صفر."})
+        if issue_date and due_date and due_date < issue_date:
+            raise serializers.ValidationError({"due_date": "تاريخ الاستحقاق لا يجوز أن يسبق تاريخ إصدار/استلام الشيك."})
+        if doc and company and bank and amount is not None:
+            expected = TreasuryTransaction.Kind.RECEIPT if direction == TreasuryCheque.Direction.INCOMING else TreasuryTransaction.Kind.PAYMENT
+            if doc.company_id != company.pk or doc.source_account_id != bank.pk or doc.kind != expected or doc.amount != amount:
+                raise serializers.ValidationError({"treasury_transaction": "حركة الخزينة يجب أن تطابق الشركة والبنك ونوع ومبلغ الشيك."})
+            if doc.status != TreasuryTransaction.Status.POSTED:
+                raise serializers.ValidationError({"treasury_transaction": "اربط حركة خزينة مرحلة فقط."})
+        if direction == TreasuryCheque.Direction.OUTGOING and not doc:
+            raise serializers.ValidationError({"treasury_transaction": "الشيك الصادر يجب ربطه بسند صرف بنكي مرحّل حتى لا يظهر كالتزام غير مسجل."})
+        return attrs

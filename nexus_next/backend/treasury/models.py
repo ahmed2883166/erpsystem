@@ -348,3 +348,87 @@ class BankStatementMatchAllocation(models.Model):
         if self.line_id and self.transaction_id:
             if self.line.reconciliation.company_id != self.transaction.company_id:
                 raise ValidationError("الحركة الدفترية وسطر كشف البنك يجب أن يتبعا الشركة نفسها.")
+
+
+class TreasuryCheque(models.Model):
+    """سجل دورة الشيكات الواردة والصادرة وربطها بحركة خزينة مرحلة."""
+
+    class Direction(models.TextChoices):
+        INCOMING = "incoming", "وارد"
+        OUTGOING = "outgoing", "صادر"
+
+    class Status(models.TextChoices):
+        RECEIVED = "received", "مستلم"
+        DEPOSITED = "deposited", "مودع بالبنك"
+        UNDER_COLLECTION = "under_collection", "تحت التحصيل"
+        ISSUED = "issued", "صادر"
+        PRESENTED = "presented", "مقدم للصرف"
+        CLEARED = "cleared", "تم التحصيل/الصرف"
+        BOUNCED = "bounced", "مرتد"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="treasury_cheques")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="treasury_cheques")
+    fiscal_year = models.ForeignKey("companies.FiscalYear", on_delete=models.PROTECT, related_name="treasury_cheques")
+    bank_account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="cheques")
+    direction = models.CharField(max_length=8, choices=Direction.choices)
+    cheque_number = models.CharField(max_length=80)
+    counterparty = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    issue_date = models.DateField()
+    due_date = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices)
+    treasury_transaction = models.OneToOneField(
+        TreasuryTransaction, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="cheque",
+    )
+    deposit_date = models.DateField(null=True, blank=True)
+    clearing_date = models.DateField(null=True, blank=True)
+    bounce_date = models.DateField(null=True, blank=True)
+    notes = models.CharField(max_length=500, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.PROTECT, related_name="created_treasury_cheques")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("due_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "bank_account", "direction", "cheque_number"),
+                                    name="uq_treasury_cheque_bank_number"),
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_treasury_cheque_amount_positive"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "direction", "status", "due_date"), name="tr_cheque_co_status_due_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.bank_account_id:
+            if self.bank_account.company_id != self.company_id:
+                raise ValidationError({"bank_account": "الحساب البنكي لا يتبع الشركة."})
+            if self.bank_account.kind != TreasuryAccount.Kind.BANK or not self.bank_account.is_active:
+                raise ValidationError({"bank_account": "اختر حسابًا بنكيًا نشطًا."})
+            if self.bank_account.currency_code != self.company.base_currency.code:
+                raise ValidationError({"bank_account": "دورة الشيكات في هذه المرحلة متاحة بالعملة الأساسية فقط."})
+            if self.bank_account.branch_id and self.bank_account.branch_id != self.branch_id:
+                raise ValidationError({"branch": "فرع الشيك لا يطابق فرع الحساب البنكي."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if self.fiscal_year_id and self.fiscal_year.company_id != self.company_id:
+            raise ValidationError({"fiscal_year": "السنة المالية لا تتبع الشركة."})
+        if self.amount <= 0:
+            raise ValidationError({"amount": "قيمة الشيك يجب أن تكون أكبر من صفر."})
+        if self.due_date < self.issue_date:
+            raise ValidationError({"due_date": "تاريخ الاستحقاق لا يجوز أن يسبق تاريخ إصدار/استلام الشيك."})
+        if self.treasury_transaction_id:
+            doc = self.treasury_transaction
+            expected_kind = TreasuryTransaction.Kind.RECEIPT if self.direction == self.Direction.INCOMING else TreasuryTransaction.Kind.PAYMENT
+            if doc.company_id != self.company_id or doc.source_account_id != self.bank_account_id:
+                raise ValidationError({"treasury_transaction": "حركة الخزينة لا تطابق الشركة أو الحساب البنكي للشيك."})
+            if doc.kind != expected_kind or doc.amount != self.amount:
+                raise ValidationError({"treasury_transaction": "نوع أو مبلغ حركة الخزينة لا يطابق الشيك."})

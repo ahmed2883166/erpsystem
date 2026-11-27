@@ -12,8 +12,8 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
-from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
+from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
     reverse_treasury_fx_revaluation, can_reverse_treasury_fx_revaluation,
@@ -997,3 +997,145 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
         if recon.status != BankReconciliation.Status.DRAFT or instance.matched_transaction_id:
             raise ValidationError("لا يمكن حذف سطر مطابق أو ضمن تسوية معتمدة.")
         instance.delete()
+
+
+class TreasuryChequeViewSet(TreasuryBaseViewSet):
+    serializer_class = TreasuryChequeSerializer
+    queryset = TreasuryCheque.objects.select_related(
+        "company", "branch", "fiscal_year", "bank_account", "treasury_transaction"
+    ).all()
+    filterset_fields = ("company", "branch", "bank_account", "direction", "status", "due_date")
+    search_fields = ("cheque_number", "counterparty", "notes")
+    ordering_fields = ("issue_date", "due_date", "amount", "cheque_number", "created_at")
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            qs = qs.filter(branch__in=accessible_branches(self.request.user))
+        return qs
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._scope(data["company"].pk)
+        self._write(data["company"].pk)
+        if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الشيك.")
+        direction = data["direction"]
+        status_value = TreasuryCheque.Status.RECEIVED if direction == TreasuryCheque.Direction.INCOMING else TreasuryCheque.Status.ISSUED
+        serializer.save(created_by=self.request.user, status=status_value)
+
+    def perform_update(self, serializer):
+        cheque = serializer.instance
+        self._write(cheque.company_id)
+        if cheque.status in (TreasuryCheque.Status.CLEARED, TreasuryCheque.Status.BOUNCED, TreasuryCheque.Status.CANCELLED):
+            raise ValidationError("لا يمكن تعديل شيك تمت تسويته أو ارتداده أو إلغاؤه.")
+        if not can_access_branch(self.request.user, cheque.branch_id, cheque.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الشيك.")
+        if "status" in serializer.validated_data or "treasury_transaction" in serializer.validated_data:
+            raise ValidationError("تغيير حالة الشيك أو حركته يتم من إجراءات دورة الشيك وليس بالتعديل المباشر.")
+        serializer.save()
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def deposit(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        if cheque.direction != TreasuryCheque.Direction.INCOMING or cheque.status != TreasuryCheque.Status.RECEIVED:
+            raise ValidationError("الإيداع متاح للشيك الوارد المستلم فقط.")
+        deposit_date = dateparse.parse_date(str(request.data.get("deposit_date", "")))
+        if not deposit_date or deposit_date < cheque.issue_date:
+            raise ValidationError({"deposit_date": "أدخل تاريخ إيداع صحيحًا لا يسبق تاريخ الشيك."})
+        cheque.status = TreasuryCheque.Status.DEPOSITED
+        cheque.deposit_date = deposit_date
+        cheque.save(update_fields=("status", "deposit_date", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def under_collection(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        if cheque.direction != TreasuryCheque.Direction.INCOMING or cheque.status != TreasuryCheque.Status.DEPOSITED:
+            raise ValidationError("حالة تحت التحصيل تتطلب شيكًا واردًا تم إيداعه.")
+        cheque.status = TreasuryCheque.Status.UNDER_COLLECTION
+        cheque.save(update_fields=("status", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def present(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        if cheque.direction != TreasuryCheque.Direction.OUTGOING or cheque.status != TreasuryCheque.Status.ISSUED:
+            raise ValidationError("تقديم الشيك للصرف متاح للشيك الصادر فقط.")
+        cheque.status = TreasuryCheque.Status.PRESENTED
+        cheque.save(update_fields=("status", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def clear(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        allowed = (
+            cheque.direction == TreasuryCheque.Direction.INCOMING
+            and cheque.status in (TreasuryCheque.Status.DEPOSITED, TreasuryCheque.Status.UNDER_COLLECTION)
+        ) or (
+            cheque.direction == TreasuryCheque.Direction.OUTGOING
+            and cheque.status in (TreasuryCheque.Status.ISSUED, TreasuryCheque.Status.PRESENTED)
+        )
+        if not allowed:
+            raise ValidationError("لا يمكن تسوية الشيك من حالته الحالية.")
+        raw_id = request.data.get("treasury_transaction")
+        if not raw_id or not str(raw_id).isdigit():
+            raise ValidationError({"treasury_transaction": "اربط سند خزينة بنكيًا مرحّلًا لإثبات التحصيل أو الصرف."})
+        doc = TreasuryTransaction.objects.select_for_update().filter(
+            pk=int(raw_id), company=cheque.company, source_account=cheque.bank_account,
+            amount=cheque.amount, status=TreasuryTransaction.Status.POSTED,
+            kind=TreasuryTransaction.Kind.RECEIPT if cheque.direction == TreasuryCheque.Direction.INCOMING else TreasuryTransaction.Kind.PAYMENT,
+        ).first()
+        if not doc:
+            raise ValidationError({"treasury_transaction": "سند الخزينة غير مرحّل أو لا يطابق البنك أو المبلغ أو اتجاه الشيك."})
+        if TreasuryCheque.objects.filter(treasury_transaction=doc).exclude(pk=cheque.pk).exists():
+            raise ValidationError({"treasury_transaction": "سند الخزينة مرتبط بشيك آخر."})
+        clearing_date = dateparse.parse_date(str(request.data.get("clearing_date", "")))
+        if not clearing_date or clearing_date < cheque.issue_date:
+            raise ValidationError({"clearing_date": "أدخل تاريخ تحصيل/صرف صحيحًا."})
+        cheque.treasury_transaction = doc
+        cheque.clearing_date = clearing_date
+        cheque.status = TreasuryCheque.Status.CLEARED
+        cheque.save(update_fields=("treasury_transaction", "clearing_date", "status", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def bounce(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        if cheque.status in (TreasuryCheque.Status.CLEARED, TreasuryCheque.Status.BOUNCED, TreasuryCheque.Status.CANCELLED):
+            raise ValidationError("لا يمكن ارتداد شيك تمت تسويته أو ارتداده أو إلغاؤه؛ عالج القيد المرتبط أولًا.")
+        if cheque.direction == TreasuryCheque.Direction.OUTGOING and cheque.treasury_transaction_id:
+            if cheque.treasury_transaction.status != TreasuryTransaction.Status.REVERSED:
+                raise ValidationError("اعكس سند الصرف المرتبط بالشيك الصادر أولًا من إجراء العكس المحاسبي.")
+        bounce_date = dateparse.parse_date(str(request.data.get("bounce_date", "")))
+        if not bounce_date:
+            raise ValidationError({"bounce_date": "أدخل تاريخ ارتداد صحيحًا."})
+        cheque.status = TreasuryCheque.Status.BOUNCED
+        cheque.bounce_date = bounce_date
+        cheque.notes = (cheque.notes + " | " if cheque.notes else "") + str(request.data.get("reason", "شيك مرتد"))[:300]
+        cheque.save(update_fields=("status", "bounce_date", "notes", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def cancel(self, request, pk=None):
+        cheque = self.get_object()
+        self._write(cheque.company_id)
+        if cheque.status not in (TreasuryCheque.Status.RECEIVED, TreasuryCheque.Status.ISSUED):
+            raise ValidationError("الإلغاء متاح للشيك المستلم أو الصادر قبل الإيداع أو التقديم فقط.")
+        if cheque.direction == TreasuryCheque.Direction.OUTGOING and cheque.treasury_transaction.status != TreasuryTransaction.Status.REVERSED:
+            raise ValidationError("اعكس سند الصرف المرتبط أولًا قبل إلغاء الشيك.")
+        cheque.status = TreasuryCheque.Status.CANCELLED
+        cheque.save(update_fields=("status", "updated_at"))
+        return response.Response(self.get_serializer(cheque).data)

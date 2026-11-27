@@ -9,7 +9,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, BankReconciliation, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -1111,3 +1111,105 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(summary.data["unexplained_difference"], "0.0000")
         self.assertEqual(JournalEntry.objects.count(), 1)
 
+
+
+class TreasuryChequeWorkflowTests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(code="CHQ", name_ar="شركة الشيكات", country="EG", activity="commercial", base_currency=currency)
+        self.branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        self.year = FiscalYear.objects.create(company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        self.user = get_user_model().objects.create_user(username="cheque-user", password="test-password")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(self.user)
+        self.bank_gl = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="البنك", nature=ChartOfAccount.Nature.ASSET)
+        self.counter_gl = ChartOfAccount.objects.create(company=self.company, code="4100", name_ar="حساب مقابل", nature=ChartOfAccount.Nature.REVENUE)
+        self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.bank_gl, kind="bank", code="BANK-CHQ", name_ar="البنك الرئيسي")
+
+    def _create_incoming(self, number="IN-001"):
+        return self.client.post("/api/treasury/cheques/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "bank_account": self.bank.pk, "direction": "incoming", "cheque_number": number,
+            "counterparty": "عميل تجريبي", "amount": "1250.0000",
+            "issue_date": "2026-03-01", "due_date": "2026-03-15",
+        }, format="json")
+
+    def _posted_receipt(self):
+        doc = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.bank.pk, "counter_account": self.counter_gl.pk,
+            "kind": "receipt", "document_number": "CHQ-CLEAR-001",
+            "transaction_date": "2026-03-15", "amount": "1250.0000", "description": "تحصيل شيك",
+        }, format="json")
+        self.assertEqual(doc.status_code, 201, doc.data)
+        posted = self.client.post(f"/api/treasury/transactions/{doc.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return doc.data["id"]
+
+    def test_incoming_cheque_moves_received_deposited_under_collection_and_cleared(self):
+        created = self._create_incoming()
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["status"], "received")
+        cheque_id = created.data["id"]
+        deposited = self.client.post(f"/api/treasury/cheques/{cheque_id}/deposit/", {"deposit_date": "2026-03-10"}, format="json")
+        self.assertEqual(deposited.status_code, 200, deposited.data)
+        under_collection = self.client.post(f"/api/treasury/cheques/{cheque_id}/under_collection/", {}, format="json")
+        self.assertEqual(under_collection.status_code, 200, under_collection.data)
+        self.assertEqual(under_collection.data["status"], "under_collection")
+        transaction_id = self._posted_receipt()
+        cleared = self.client.post(f"/api/treasury/cheques/{cheque_id}/clear/", {
+            "treasury_transaction": transaction_id, "clearing_date": "2026-03-15",
+        }, format="json")
+        self.assertEqual(cleared.status_code, 200, cleared.data)
+        self.assertEqual(cleared.data["status"], "cleared")
+        self.assertEqual(cleared.data["treasury_transaction"], transaction_id)
+        duplicate = self.client.post(f"/api/treasury/cheques/{cheque_id}/clear/", {
+            "treasury_transaction": transaction_id, "clearing_date": "2026-03-16",
+        }, format="json")
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+
+    def test_incoming_cheque_can_bounce_before_clearing_without_posting_cash(self):
+        created = self._create_incoming("IN-BOUNCE")
+        self.assertEqual(created.status_code, 201, created.data)
+        bounced = self.client.post(f"/api/treasury/cheques/{created.data['id']}/bounce/", {
+            "bounce_date": "2026-03-12", "reason": "رصيد غير كافٍ",
+        }, format="json")
+        self.assertEqual(bounced.status_code, 200, bounced.data)
+        self.assertEqual(bounced.data["status"], "bounced")
+        self.assertIsNone(bounced.data["treasury_transaction"])
+        self.assertEqual(JournalEntry.objects.count(), 0)
+
+    def test_cheque_rejects_duplicate_number_for_same_bank_and_direction(self):
+        first = self._create_incoming("DUP-100")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self._create_incoming("DUP-100")
+        self.assertEqual(second.status_code, 400, second.data)
+
+    def test_outgoing_cheque_requires_matching_posted_bank_payment(self):
+        missing = self.client.post("/api/treasury/cheques/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "bank_account": self.bank.pk, "direction": "outgoing", "cheque_number": "OUT-001",
+            "counterparty": "مورد تجريبي", "amount": "500.0000",
+            "issue_date": "2026-03-01", "due_date": "2026-03-15",
+        }, format="json")
+        self.assertEqual(missing.status_code, 400, missing.data)
+        doc = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.bank.pk, "counter_account": self.counter_gl.pk,
+            "kind": "payment", "document_number": "CHQ-PAY-001",
+            "transaction_date": "2026-03-01", "amount": "500.0000", "description": "صرف شيك",
+        }, format="json")
+        self.assertEqual(doc.status_code, 201, doc.data)
+        posted = self.client.post(f"/api/treasury/transactions/{doc.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        created = self.client.post("/api/treasury/cheques/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "bank_account": self.bank.pk, "direction": "outgoing", "cheque_number": "OUT-001",
+            "counterparty": "مورد تجريبي", "amount": "500.0000",
+            "issue_date": "2026-03-01", "due_date": "2026-03-15",
+            "treasury_transaction": doc.data["id"],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["status"], "issued")
+        presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
+        self.assertEqual(presented.status_code, 200, presented.data)
