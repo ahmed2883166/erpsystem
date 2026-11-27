@@ -14,7 +14,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import CustomerReceipt, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesDocumentTemplate
+from sales.models import CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -2550,6 +2550,123 @@ class SalesWorkflowTests(APITestCase):
             debit_total = sum((line.debit for line in entry.lines.all()), Decimal("0"))
             credit_total = sum((line.credit for line in entry.lines.all()), Decimal("0"))
             self.assertEqual(debit_total, credit_total, entry.entry_number)
+
+    def test_sales_performance_export_returns_real_scoped_xlsx_workbook(self):
+        delivery_id, line_id = self._create_delivery("DEL-XLSX-EXPORT")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-XLSX-EXPORT",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        response = self.client.get(
+            "/api/sales-documents/invoices/sales-performance-export/"
+            f"?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn(".xlsx", response["Content-Disposition"])
+        from io import BytesIO
+        from openpyxl import load_workbook
+        workbook = load_workbook(BytesIO(response.content), read_only=True, data_only=True)
+        self.assertEqual(workbook.sheetnames, ["ملخص", "حسب العميل", "حسب الصنف"])
+        self.assertEqual(workbook["ملخص"]["B10"].value, 1)
+        customer_rows = list(workbook["حسب العميل"].iter_rows(values_only=True))
+        self.assertEqual(customer_rows[1][0], self.customer.name_ar)
+        product_rows = list(workbook["حسب الصنف"].iter_rows(values_only=True))
+        self.assertEqual(product_rows[1][0], self.product.code)
+        self.assertEqual(product_rows[1][1], self.product.name_ar)
+
+    def test_posted_sales_documents_keep_print_template_snapshot_after_default_changes(self):
+        delivery_template = SalesDocumentTemplate.objects.create(
+            company=self.company, document_type="delivery", name="Delivery Frozen",
+            style="modern", config={"accent_color": "#224466"}, is_default=True,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-PRINT-SNAPSHOT")
+        delivery = self.client.get(f"/api/sales-documents/deliveries/{delivery_id}/").data
+        self.assertEqual(delivery["print_template_snapshot"]["template_id"], delivery_template.pk)
+        self.assertEqual(delivery["print_template_snapshot"]["style"], "modern")
+
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-PRINT-SNAPSHOT",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        receipt_template = SalesDocumentTemplate.objects.create(
+            company=self.company, document_type="receipt", name="Receipt Frozen",
+            style="compact", config={"footer_text": "نسخة ثابتة"}, is_default=True,
+        )
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": invoice.data["id"], "receipt_number": "RC-PRINT-SNAPSHOT",
+            "receipt_date": "2026-03-11", "method": "cash", "amount": "10",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        self.assertEqual(posted_receipt.data["print_template_snapshot"]["template_id"], receipt_template.pk)
+
+        batch = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk, "customer": self.customer.pk, "branch": self.branch.pk,
+            "receipt_number": "RC-BATCH-PRINT-SNAPSHOT", "receipt_date": "2026-03-11",
+            "method": "cash", "amount": "5", "reference": "دفعة مقدمة",
+        }, format="json")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        posted_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_batch.status_code, 200, posted_batch.data)
+        self.assertEqual(posted_batch.data["print_template_snapshot"]["template_id"], receipt_template.pk)
+
+        return_template = SalesDocumentTemplate.objects.create(
+            company=self.company, document_type="return", name="Return Frozen",
+            style="modern", config={"footer_text": "مردود"}, is_default=True,
+        )
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-PRINT-SNAPSHOT", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["print_template_snapshot"]["template_id"], return_template.pk)
+
+        for template in (delivery_template, receipt_template, return_template):
+            template.config = {"footer_text": "تم تغيير القالب"}
+            template.save(update_fields=("config", "updated_at"))
+        self.assertEqual(
+            SalesDocumentTemplate.objects.get(pk=delivery_template.pk).config["footer_text"],
+            "تم تغيير القالب",
+        )
+        saved_receipt = CustomerReceipt.objects.get(pk=receipt.data["id"])
+        self.assertEqual(saved_receipt.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
+        saved_batch = CustomerReceiptBatch.objects.get(pk=batch.data["id"])
+        self.assertEqual(saved_batch.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
+        saved_return = self.client.get(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/"
+        ).data
+        self.assertEqual(saved_return["print_template_snapshot"]["config"]["footer_text"], "مردود")
 
     def test_sales_return_has_its_own_print_template_type(self):
         admin = get_user_model().objects.create_user(

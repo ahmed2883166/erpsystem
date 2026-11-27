@@ -26,6 +26,7 @@ class SalesDelivery(models.Model):
     notes = models.TextField(blank=True)
     quotation_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     order_snapshot = models.JSONField(default=dict, blank=True, editable=False)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_deliveries")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -375,6 +376,7 @@ class CustomerReceipt(models.Model):
     realized_fx_gain = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     realized_fx_loss = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     reference = models.CharField(max_length=120, blank=True)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="customer_receipt")
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_customer_receipts")
@@ -439,6 +441,7 @@ class SalesReturn(models.Model):
     reversed_at = models.DateTimeField(null=True, blank=True)
     reversed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_sales_returns")
     notes = models.TextField(blank=True)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_returns")
     created_at = models.DateTimeField(auto_now_add=True)
     posted_at = models.DateTimeField(null=True, blank=True)
@@ -718,6 +721,7 @@ class CustomerReceiptBatch(models.Model):
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
     reference = models.CharField(max_length=120, blank=True)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField(
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,

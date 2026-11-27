@@ -48,12 +48,12 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
             "id", "company", "customer", "customer_name", "branch", "branch_name",
             "receipt_number", "receipt_date", "method", "payment_account",
             "payment_account_name", "amount", "allocated_amount", "unallocated_amount",
-            "allocations", "allocation_lines", "reference", "status", "journal_entry",
+            "allocations", "allocation_lines", "reference", "status", "print_template_snapshot", "journal_entry",
             "journal_number", "reversal_journal_entry", "reversal_journal_number",
             "reversal_date", "created_at", "posted_at",
         )
         read_only_fields = (
-            "status", "journal_entry", "journal_number", "reversal_journal_entry",
+            "status", "print_template_snapshot", "journal_entry", "journal_number", "reversal_journal_entry",
             "reversal_journal_number", "reversal_date", "created_at", "posted_at",
         )
 

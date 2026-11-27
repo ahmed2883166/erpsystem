@@ -43,13 +43,13 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                   "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                   "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                   "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
-                  "notes", "lines", "line_items", "created_at", "posted_at")
+                  "notes", "lines", "line_items", "print_template_snapshot", "created_at", "posted_at")
         read_only_fields = ("warehouse", "branch", "status", "net_total", "tax_total", "grand_total",
                             "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                             "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                             "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                             "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
-                            "line_items", "created_at", "posted_at")
+                            "line_items", "print_template_snapshot", "created_at", "posted_at")
 
     def validate(self, attrs):
         invoice = attrs.get("invoice", self.instance.invoice if self.instance else None)

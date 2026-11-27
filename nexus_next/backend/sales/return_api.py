@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone, dateparse
 from rest_framework import status
@@ -6,8 +7,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, is_platform_owner
-from .api import SalesBaseViewSet, _sales_warehouse_accessible
-from .models import SalesReturn
+from .api import SalesBaseViewSet, _document_template_snapshot, _sales_warehouse_accessible
+from .models import SalesReturn, SalesDocumentTemplate
 from .return_serializers import SalesReturnSerializer
 from .return_services import post_sales_return, reverse_sales_return
 
@@ -75,6 +76,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
         serializer.save()
 
     @action(detail=True, methods=("post",))
+    @transaction.atomic
     def post(self, request, pk=None):
         sales_return = self.get_object()
         self._check_write(sales_return.company_id)
@@ -84,6 +86,10 @@ class SalesReturnViewSet(SalesBaseViewSet):
             accessible = bool(sales_return.branch_id and can_access_branch(request.user, sales_return.branch_id, sales_return.company_id))
         if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
+        sales_return.print_template_snapshot = _document_template_snapshot(
+            sales_return.company, SalesDocumentTemplate.DocumentType.RETURN,
+        )
+        sales_return.save(update_fields=("print_template_snapshot",))
         sales_return = post_sales_return(sales_return.pk, request.user)
         return Response(self.get_serializer(sales_return).data, status=status.HTTP_200_OK)
 
