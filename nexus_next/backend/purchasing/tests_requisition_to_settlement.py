@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -27,9 +27,20 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             company=self.company, code="MAIN", name_ar="الرئيسي",
             is_head_office=True,
         )
+        today = date.today()
+        self.request_date = today
+        self.rfq_issue_date = today + timedelta(days=1)
+        self.rfq_close_date = today + timedelta(days=7)
+        self.quote_date = today + timedelta(days=2)
+        self.order_date = today + timedelta(days=3)
+        self.receipt_date = today + timedelta(days=4)
+        self.invoice_date = today + timedelta(days=5)
+        self.payment_date = today + timedelta(days=6)
+        self.return_date = today + timedelta(days=7)
         FiscalYear.objects.create(
-            company=self.company, name="2026",
-            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+            company=self.company, name=str(today.year),
+            start_date=date(today.year, 1, 1),
+            end_date=date(today.year, 12, 31),
         )
         user_model = get_user_model()
         self.buyer = user_model.objects.create_user(
@@ -103,8 +114,8 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         requisition = self.client.post("/api/purchasing/requisitions/", {
             "company": self.company.pk,
             "request_number": "REQ-E2E-001",
-            "request_date": "2026-03-01",
-            "required_date": "2026-03-20",
+            "request_date": self.request_date.isoformat(),
+            "required_date": self.rfq_close_date.isoformat(),
             "department": "المخازن",
             "purpose": "احتياج تشغيلي لاختبار دورة الشراء كاملة",
             "lines": [{
@@ -134,8 +145,8 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             "company": self.company.pk,
             "source_requisition": requisition_id,
             "rfq_number": "RFQ-E2E-001",
-            "issue_date": "2026-03-02",
-            "closing_date": "2026-03-08",
+            "issue_date": self.rfq_issue_date.isoformat(),
+            "closing_date": self.rfq_close_date.isoformat(),
             "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk],
             "lines": [{"product": self.product.pk, "quantity": "4"}],
         }, format="json")
@@ -150,7 +161,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         quote_a = self.client.post("/api/purchasing/quotations/", {
             "rfq": rfq_id, "supplier": self.supplier_a.pk,
             "quotation_number": "QUOTE-E2E-A",
-            "quotation_date": "2026-03-03", "valid_until": "2026-03-20",
+            "quotation_date": self.quote_date.isoformat(), "valid_until": self.rfq_close_date.isoformat(),
             "delivery_days": 5, "payment_terms": "30 يوم",
             "lines": [{
                 "rfq_line": rfq_line_id, "unit_price": "100",
@@ -161,7 +172,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         quote_b = self.client.post("/api/purchasing/quotations/", {
             "rfq": rfq_id, "supplier": self.supplier_b.pk,
             "quotation_number": "QUOTE-E2E-B",
-            "quotation_date": "2026-03-03", "valid_until": "2026-03-20",
+            "quotation_date": self.quote_date.isoformat(), "valid_until": self.rfq_close_date.isoformat(),
             "delivery_days": 8, "payment_terms": "نقدي",
             "lines": [{
                 "rfq_line": rfq_line_id, "unit_price": "105",
@@ -185,8 +196,8 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             {
                 "warehouse": self.warehouse.pk,
                 "order_number": "PO-E2E-001",
-                "order_date": "2026-03-04",
-                "expected_date": "2026-03-20",
+                "order_date": self.order_date.isoformat(),
+                "expected_date": self.rfq_close_date.isoformat(),
             }, format="json",
         )
         self.assertEqual(converted.status_code, 201, converted.data)
@@ -203,7 +214,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         receipt = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
             "warehouse": self.warehouse.pk, "purchase_order": order_id,
-            "receipt_number": "GR-E2E-001", "receipt_date": "2026-03-05",
+            "receipt_number": "GR-E2E-001", "receipt_date": self.receipt_date.isoformat(),
             "lines": [{
                 "product": self.product.pk, "quantity": "2",
                 "unit_cost": "100", "purchase_order_line": order_line_id,
@@ -219,7 +230,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
             "receipt": receipt.data["id"], "invoice_number": "INV-E2E-001",
-            "invoice_date": "2026-03-10",
+            "invoice_date": self.invoice_date.isoformat(),
             "lines": [{
                 "receipt_line": receipt.data["line_items"][0]["id"],
                 "unit_price": "100", "tax_rate": "14",
@@ -236,7 +247,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
             "invoice": invoice.data["id"], "payment_number": "PAY-E2E-001",
-            "payment_date": "2026-03-11", "method": "bank",
+            "payment_date": self.payment_date.isoformat(), "method": "bank",
             "payment_account": self.bank.pk, "amount": "114",
         }, format="json")
         self.assertEqual(payment.status_code, 201, payment.data)
@@ -249,7 +260,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         returned = self.client.post("/api/purchasing/returns/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
             "invoice": invoice.data["id"], "return_number": "RET-E2E-001",
-            "return_date": "2026-03-12",
+            "return_date": self.return_date.isoformat(),
             "lines": [{
                 "invoice_line": invoice.data["invoice_lines"][0]["id"],
                 "quantity": "1",
@@ -270,7 +281,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.assertEqual(balance.inventory_value, Decimal("100.0000"))
 
         grni = self.client.get("/api/purchasing/receipts/grni-aging/", {
-            "company": self.company.pk, "as_of": "2026-03-12",
+            "company": self.company.pk, "as_of": self.return_date.isoformat(),
         })
         self.assertEqual(grni.status_code, 200, grni.data)
         self.assertEqual(grni.data["grand_total"], "0.0000")
@@ -286,7 +297,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
 
         statement = self.client.get("/api/purchasing/invoices/supplier-statement/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
-            "date_from": "2026-03-01", "date_to": "2026-03-31",
+            "date_from": self.request_date.isoformat(), "date_to": (self.return_date + timedelta(days=1)).isoformat(),
         })
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["closing_balance"], "0.0000")
