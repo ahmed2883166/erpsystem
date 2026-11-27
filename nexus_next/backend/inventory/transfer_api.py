@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 
-from .models import StockTransfer, StockTransferReceipt, Warehouse
+from .models import StockTransfer, StockTransferReceipt
 from .transfer_serializers import (
     StockTransferReceiveSerializer,
     StockTransferReceiptSerializer,
