@@ -57,14 +57,13 @@ def _foreign_position(account):
 def record_posted_document_bank_movement(*, company, branch, fiscal_year, account, kind, amount,
                                          transaction_date, document_number, description,
                                          counter_account, journal_entry, user=None, reference="", cash_flow_category=None):
-    """تسجيل مرآة لحركة بنك مستند مرحّل وربطها بالقيد الأصلي دون إنشاء قيد مكرر."""
-    expected_kind = TreasuryAccount.Kind.BANK if kind in (
-        TreasuryTransaction.Kind.RECEIPT, TreasuryTransaction.Kind.PAYMENT
-    ) else None
-    if expected_kind is None:
-        raise ValidationError("نوع حركة البنك المرتبطة بالمستند غير مدعوم.")
+    """تسجيل مرآة لحركة خزينة أو بنك لمستند مرحّل وربطها بالقيد الأصلي دون قيد مكرر."""
+    if kind not in (TreasuryTransaction.Kind.RECEIPT, TreasuryTransaction.Kind.PAYMENT):
+        raise ValidationError("نوع حركة الخزينة المرتبطة بالمستند غير مدعوم.")
     treasury_account = TreasuryAccount.objects.select_for_update().filter(
-        company=company, account=account, kind=expected_kind, is_active=True,
+        company=company, account=account, kind__in=(
+            TreasuryAccount.Kind.CASH, TreasuryAccount.Kind.BANK,
+        ), is_active=True,
     ).first()
     if not treasury_account:
         return None
