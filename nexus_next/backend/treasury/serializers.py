@@ -352,8 +352,11 @@ class CashCommitmentSerializer(serializers.ModelSerializer):
     def _paid(self, obj):
         from accounting.models import JournalEntry
         total = Decimal("0")
-        for payment in obj.payments.select_related("reversal_journal_entry").all():
-            if payment.reversal_journal_entry_id and payment.reversal_journal_entry.status == JournalEntry.Status.POSTED:
+        for payment in obj.payments.select_related("journal_entry", "reversal_journal_entry").all():
+            if payment.reversal_journal_entry_id:
+                if payment.reversal_journal_entry.status != JournalEntry.Status.REVERSED:
+                    continue
+            elif payment.journal_entry.status != JournalEntry.Status.POSTED:
                 continue
             total += payment.base_amount
         return total
@@ -378,6 +381,9 @@ class CashCommitmentSerializer(serializers.ModelSerializer):
             if account.company_id != company.pk or account.is_group or not account.is_active or account.nature != account.Nature.LIABILITY:
                 raise serializers.ValidationError({"payable_account": "اختر حساب خصوم تفصيليًا ونشطًا تابعًا للشركة."})
         if company and currency_code and amount is not None:
+            from companies.models import Currency
+            if not Currency.objects.filter(code=currency_code, is_active=True).exists():
+                raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة."})
             if currency_code == company.base_currency.code:
                 rate = Decimal("1")
                 base_amount = amount
@@ -435,6 +441,9 @@ class CashCommitmentScheduleSerializer(serializers.ModelSerializer):
         if company and account and (account.company_id != company.pk or account.is_group or not account.is_active or account.nature != account.Nature.LIABILITY):
             raise serializers.ValidationError({"payable_account": "اختر حساب خصوم تفصيليًا ونشطًا تابعًا للشركة."})
         if company and amount is not None:
+            from companies.models import Currency
+            if not Currency.objects.filter(code=currency, is_active=True).exists():
+                raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة."})
             if currency == company.base_currency.code:
                 rate = Decimal("1")
                 attrs["exchange_rate"] = rate
