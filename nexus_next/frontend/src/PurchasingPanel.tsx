@@ -932,7 +932,7 @@ const postInvoice = async (id: number) => {
     </div>}
     {tab === "aging" && agingView === "matching" && <div className="inventory-form">
       <div className="inventory-form-row"><label>من تاريخ الأمر<input type="date" value={matchingReportFrom} onChange={e=>{setMatchingReportFrom(e.target.value);setPurchaseMatchingReport(null);}}/></label><label>إلى تاريخ الأمر<input type="date" value={matchingReportTo} onChange={e=>{setMatchingReportTo(e.target.value);setPurchaseMatchingReport(null);}}/></label></div>
-      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseMatchingReport()}>{busy?"جارٍ التحميل…":"عرض تقرير المطابقة"}</button></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseMatchingReport()}>{busy?"جارٍ التحميل…":"عرض تقرير المطابقة"}</button>{purchaseMatchingReport && <a className="subtle-button" href={`/api/purchasing/orders/matching-report-export-excel/?company=${companyId}${matchingReportFrom? `&date_from=${matchingReportFrom}`:""}${matchingReportTo? `&date_to=${matchingReportTo}`:""}`}>تصدير Excel</a>}</div>
       {purchaseMatchingReport && <div className="inventory-wide">
         <div className="stock-card-summary">
           <div><span>قيمة أوامر الشراء</span><strong>{money(purchaseMatchingReport.totals.order_value)}</strong></div>
