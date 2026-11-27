@@ -396,7 +396,7 @@ export type TreasuryLiquiditySummary = {
 export type TreasuryLiquidityForecast = {
   company:number; as_of:string; horizon_days:number; end_date:string; base_currency:string;
   branch:number|null; actual_cash_balance:string; expected_collections:string;
-  expected_supplier_payments:string; expected_payroll:string; expected_payments:string;
+  expected_supplier_payments:string; expected_payroll:string; expected_other_commitments:string; expected_payments:string;
   expected_net:string; projected_closing_balance:string; note:string; coverage_notes:string[];
   daily:{date:string;collections:string;supplier_payments:string;payroll:string;other_commitments:string;payments:string;net:string;projected_balance:string}[];
   items:{kind:"collections"|"supplier_payments"|"payroll"|"other_commitments";document:string;party:string;due_date:string;forecast_date:string;balance:string;status:string;date_basis:string}[];
