@@ -199,7 +199,7 @@ class SalesInvoice(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoices")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_invoices")
-    delivery = models.OneToOneField(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoice")
+    delivery = models.ForeignKey(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
@@ -273,7 +273,7 @@ class SalesInvoice(models.Model):
 class SalesInvoiceLine(models.Model):
     """يمثل بند بيع بضاعة مسلمة أو خدمة مفوترة مباشرة."""
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="lines")
-    delivery_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_line")
+    delivery_line = models.ForeignKey(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_lines")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_invoice_lines")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, default=1, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
@@ -308,8 +308,8 @@ class SalesInvoiceLine(models.Model):
         if self.delivery_line_id:
             if self.delivery_line.product_id != self.product_id or self.product.product_type != Product.ProductType.GOODS:
                 raise ValidationError({"delivery_line": "بند التسليم يجب أن يطابق صنفًا مخزنيًا."})
-            if self.quantity != self.delivery_line.quantity:
-                self.quantity = self.delivery_line.quantity
+            if self.quantity <= 0 or self.quantity > self.delivery_line.quantity:
+                raise ValidationError({"quantity": "كمية الفاتورة يجب أن تكون أكبر من صفر ولا تتجاوز كمية بند إذن التسليم."})
         elif self.product.product_type != Product.ProductType.SERVICE:
             raise ValidationError({"product": "الفوترة المباشرة متاحة للخدمات فقط."})
         if self.invoice.transaction_currency_id:

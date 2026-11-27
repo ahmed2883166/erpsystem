@@ -244,7 +244,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         self._check_write(instance.company_id)
         if instance.stock_movement.status != StockMovement.Status.DRAFT:
             raise ValidationError("لا يمكن حذف إذن تسليم مرحّل.")
-        if hasattr(instance, "invoice"):
+        if instance.invoices.exists():
             raise ValidationError("لا يمكن حذف إذن تسليم مرتبط بفاتورة.")
         movement = instance.stock_movement
         SalesDeliveryAllocation.objects.filter(delivery=instance).delete()
