@@ -88,6 +88,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
     destination_name = serializers.CharField(source="destination_account.name_ar", read_only=True, default="")
     counter_account_code = serializers.CharField(source="counter_account.code", read_only=True, default="")
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, default="")
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, default="")
 
     class Meta:
         model = TreasuryTransaction
@@ -95,8 +96,8 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
                   "destination_account", "destination_name", "counter_account", "counter_account_code",
                   "kind", "status", "document_number", "transaction_date", "amount",
                   "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_amount", "description",
-                  "reference", "cash_flow_category", "journal_entry", "journal_number", "created_at", "posted_at")
-        read_only_fields = ("status", "journal_entry", "created_at", "posted_at", "carrying_amount")
+                  "reference", "cash_flow_category", "journal_entry", "journal_number", "reversal_journal_entry", "reversal_journal_number", "reversed_at", "reversed_by", "created_at", "posted_at")
+        read_only_fields = ("status", "journal_entry", "reversal_journal_entry", "reversed_at", "reversed_by", "created_at", "posted_at", "carrying_amount")
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
