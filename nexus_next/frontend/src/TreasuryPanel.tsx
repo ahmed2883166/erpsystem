@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary } from "./api";
+import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -14,6 +14,8 @@ const money = (v: string | number) => formatMoney(v);
 export default function TreasuryPanel({companyId}: Props) {
   const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity">("transactions");
   const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);
+  const [forecast,setForecast]=useState<TreasuryLiquidityForecast|null>(null);
+  const [forecastDays,setForecastDays]=useState(90);
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
   const [transactions,setTransactions]=useState<TreasuryTransaction[]>([]);
   const [cheques,setCheques]=useState<TreasuryCheque[]>([]);
@@ -46,9 +48,9 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId)]);
+      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid,forecastData]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId),treasuryApi.liquidityForecast(companyId,forecastDays)]);
       const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
-      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);
+      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);setForecast(forecastData);
       setAcc(old=>({...old,currency_code:companyBase}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
@@ -57,7 +59,7 @@ export default function TreasuryPanel({companyId}: Props) {
       setChequeForm(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active&&v.currency_code===companyBase)?.id||"")}));
       setSelectedRecon(old=>old||String(rs[0]?.id||""));
     } catch(e){setError((e as Error).message||"تعذر تحميل بيانات الخزينة.");} finally{setLoading(false);}
-  },[companyId]);
+  },[companyId,forecastDays]);
   useEffect(()=>{void load();},[load]);
   const refreshSummary=useCallback(async(id:string)=>{if(!id){setSummary(null);return;}try{setSummary(await bankReconciliationApi.summary(Number(id)));}catch(e){setError((e as Error).message||"تعذر تحميل التسوية.");}},[]);
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
@@ -147,7 +149,28 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         {!liquidity?.accounts.length&&<tr><td colSpan={6}>لا توجد أرصدة خزائن أو بنوك نشطة.</td></tr>}
       </tbody></table></div>
       <p className="form-wide">{liquidity?.note||"يتم احتساب الرصيد من القيود المرحلة فقط."}</p>
-      <p className="form-wide">هذا هو المركز النقدي الفعلي حتى التاريخ المحدد، وليس توقعًا للتحصيلات والمدفوعات المستقبلية. ستُعرض التوقعات في جزء منفصل بعد ربط مصادر العملاء والموردين والمرتبات دون تكرار المستندات.</p>
+      <section className="treasury-forecast-section">
+        <div className="work-panel-head"><div><h3>التدفقات النقدية المتوقعة</h3><p>الرصيد الفعلي مضافًا إليه التحصيلات والمدفوعات المستحقة خلال الفترة</p></div>
+          <label>أفق التوقع<select value={forecastDays} onChange={e=>setForecastDays(Number(e.target.value))}><option value={30}>30 يومًا</option><option value={60}>60 يومًا</option><option value={90}>90 يومًا</option><option value={180}>180 يومًا</option></select></label>
+        </div>
+        <div className="treasury-summary-grid">
+          <div><small>تحصيلات العملاء المتوقعة</small><strong>{money(forecast?.expected_collections||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+          <div><small>مدفوعات الموردين</small><strong>{money(forecast?.expected_supplier_payments||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+          <div><small>المرتبات غير المصروفة</small><strong>{money(forecast?.expected_payroll||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+          <div><small>صافي التدفق المتوقع</small><strong>{money(forecast?.expected_net||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+          <div><small>الرصيد المتوقع بنهاية الفترة</small><strong>{money(forecast?.projected_closing_balance||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+        </div>
+        <p className="form-wide">{forecast?.note||"يتم احتساب التوقع من الأرصدة المفتوحة فقط."}</p>
+        <div className="data-table-wrap"><h3>التوقع حسب تاريخ الاستحقاق</h3><table><thead><tr><th>التاريخ</th><th>تحصيلات</th><th>موردون</th><th>مرتبات</th><th>إجمالي المدفوعات</th><th>الصافي</th><th>الرصيد المتوقع</th></tr></thead><tbody>
+          {(forecast?.daily||[]).map(row=><tr key={row.date}><td>{row.date}</td><td>{money(row.collections)}</td><td>{money(row.supplier_payments)}</td><td>{money(row.payroll)}</td><td>{money(row.payments)}</td><td>{money(row.net)}</td><td>{money(row.projected_balance)}</td></tr>)}
+          {!forecast?.daily.length&&<tr><td colSpan={7}>لا توجد تحصيلات أو مدفوعات مستحقة خلال الأفق المحدد.</td></tr>}
+        </tbody></table></div>
+        <div className="data-table-wrap"><h3>المستندات الداخلة في التوقع</h3><table><thead><tr><th>النوع</th><th>الطرف</th><th>المستند</th><th>الاستحقاق</th><th>الرصيد المتبقي</th><th>البيان</th></tr></thead><tbody>
+          {(forecast?.items||[]).map((row,index)=><tr key={row.kind+"-"+row.document+"-"+index}><td>{row.kind==="collections"?"تحصيل عميل":row.kind==="supplier_payments"?"سداد مورد":"مرتبات"}</td><td>{row.party}</td><td>{row.document}</td><td>{row.due_date}</td><td>{money(row.balance)} {forecast?.base_currency||baseCurrencyCode}</td><td>{row.date_basis}</td></tr>)}
+          {!forecast?.items.length&&<tr><td colSpan={6}>لا توجد مستندات مفتوحة ضمن الفترة.</td></tr>}
+        </tbody></table></div>
+        <ul className="form-wide">{(forecast?.coverage_notes||[]).map((note,index)=><li key={index}>{note}</li>)}</ul>
+      </section>
     </>:tab==="accounts"?<>
       <form className="treasury-form" onSubmit={saveAcc}>
         <label>النوع<select value={acc.kind} onChange={e=>setAcc({...acc,kind:e.target.value})}><option value="cash">خزينة نقدية</option><option value="bank">حساب بنكي</option></select></label>
