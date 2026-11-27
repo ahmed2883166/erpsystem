@@ -3794,3 +3794,61 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("1"))
         self.assertEqual(balance.inventory_value, Decimal("110.0000"))
+
+
+    def test_purchase_matching_report_reconciles_order_receipt_and_partial_invoice_quantities(self):
+        order_response = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-MATCH-001", "order_date": "2026-03-01",
+            "lines": [{"product": self.product.pk, "quantity": "10", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order_response.status_code, 201, order_response.data)
+        order_id = order_response.data["id"]
+        order_line_id = order_response.data["line_items"][0]["id"]
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-MATCH-001", "receipt_date": "2026-03-05",
+            "lines": [{
+                "product": self.product.pk, "quantity": "4", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/purchasing/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        receipt_line_id = receipt.data["line_items"][0]["id"]
+
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt.data["id"],
+            "invoice_number": "INV-MATCH-001", "invoice_date": "2026-03-06",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "2",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        report = self.client.get(
+            f"/api/purchasing/orders/matching-report/?company={self.company.pk}",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        row = next(item for item in report.data["rows"] if item["order_id"] == order_id)
+        self.assertEqual(row["ordered_quantity"], "10.0000")
+        self.assertEqual(row["received_quantity"], "4.0000")
+        self.assertEqual(row["invoiced_quantity"], "2.0000")
+        self.assertEqual(row["uninvoiced_received_quantity"], "2.0000")
+        self.assertEqual(row["unreceived_quantity"], "6.0000")
+        self.assertEqual(row["price_variance"], "0.0000")
+        self.assertEqual(row["receipt_numbers"], ["GR-MATCH-001"])
+        self.assertEqual(row["invoice_numbers"], ["INV-MATCH-001"])
+        self.assertEqual(report.data["totals"]["order_value"], "1000.0000")
+        self.assertEqual(report.data["totals"]["invoiced_net_amount"], "200.0000")
