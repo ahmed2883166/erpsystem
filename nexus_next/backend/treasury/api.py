@@ -41,7 +41,11 @@ def _parse_statement_date(value):
 
 
 def _parse_statement_amount(value):
-    raw = str(value or "").strip().replace(",", "").replace(" ", "")
+    raw = str(value or "").strip().replace(" ", "")
+    if "," in raw and "." not in raw and raw.count(",") == 1 and len(raw.rsplit(",", 1)[1]) == 2:
+        raw = raw.replace(",", ".")
+    else:
+        raw = raw.replace(",", "")
     if raw.upper().endswith("CR"):
         raw = raw[:-2]
     if raw.upper().endswith("DR"):
