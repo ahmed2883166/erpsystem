@@ -166,12 +166,14 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
 class BankStatementLineSerializer(serializers.ModelSerializer):
     matched_document = serializers.CharField(source="matched_transaction.document_number", read_only=True, default="")
     matched_amount = serializers.DecimalField(source="matched_transaction.amount", max_digits=20, decimal_places=4, read_only=True, default=None)
+    adjustment_document = serializers.CharField(source="adjustment_transaction.document_number", read_only=True, default="")
+    adjustment_status = serializers.CharField(source="adjustment_transaction.status", read_only=True, default="")
 
     class Meta:
         model = BankStatementLine
         fields = ("id", "reconciliation", "line_number", "transaction_date", "description", "reference",
-                  "amount", "matched_transaction", "matched_document", "matched_amount", "matched_at")
-        read_only_fields = ("matched_transaction", "matched_at")
+                  "amount", "matched_transaction", "matched_document", "matched_amount", "adjustment_transaction", "adjustment_document", "adjustment_status", "matched_at")
+        read_only_fields = ("matched_transaction", "adjustment_transaction", "matched_at")
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
