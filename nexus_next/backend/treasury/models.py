@@ -457,3 +457,152 @@ class TreasuryCheque(models.Model):
                 raise ValidationError({"treasury_transaction": "حركة الخزينة لا تطابق الشركة أو الحساب البنكي للشيك."})
             if doc.kind != expected_kind or doc.amount != self.amount:
                 raise ValidationError({"treasury_transaction": "نوع أو مبلغ حركة الخزينة لا يطابق الشيك."})
+
+
+class CashCommitment(models.Model):
+    """التزام نقدي خارج الذمم التشغيلية، يظهر في التوقعات ولا ينشئ قيدًا محاسبيًا."""
+
+    class Kind(models.TextChoices):
+        TAX = "tax", "ضرائب ورسوم"
+        RECURRING_EXPENSE = "recurring_expense", "مصروف دوري"
+        FRIDAY_OVERTIME = "friday_overtime", "أجور إضافية"
+        OTHER = "other", "التزامات أخرى"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "مفتوح"
+        PARTIALLY_PAID = "partially_paid", "مسدد جزئيًا"
+        PAID = "paid", "مسدد"
+        VOID = "void", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="cash_commitments")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="cash_commitments", null=True, blank=True)
+    commitment_type = models.CharField(max_length=24, choices=Kind.choices)
+    title = models.CharField(max_length=180)
+    period_label = models.CharField(max_length=40, blank=True)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    currency_code = models.CharField(max_length=3)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, default=1)
+    base_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    due_date = models.DateField()
+    payable_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="cash_commitments")
+    origin_type = models.CharField(max_length=80, blank=True)
+    origin_id = models.PositiveBigIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_cash_commitments")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("due_date", "id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_cash_commitment_amount_positive"),
+            models.CheckConstraint(condition=models.Q(base_amount__gt=0), name="ck_cash_commitment_base_positive"),
+            models.CheckConstraint(condition=models.Q(exchange_rate__gt=0), name="ck_cash_commitment_rate_positive"),
+            models.UniqueConstraint(fields=("company", "origin_type", "origin_id"), condition=~models.Q(origin_type=""), name="uq_cash_commitment_origin"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "due_date"), name="cash_commit_co_status_due"),
+            models.Index(fields=("company", "commitment_type", "due_date"), name="cash_commit_co_type_due"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if self.payable_account_id:
+            if self.payable_account.company_id != self.company_id:
+                raise ValidationError({"payable_account": "حساب الالتزام لا يتبع الشركة."})
+            if self.payable_account.is_group or not self.payable_account.is_active or self.payable_account.nature != ChartOfAccount.Nature.LIABILITY:
+                raise ValidationError({"payable_account": "اختر حساب خصوم تفصيليًا ونشطًا."})
+        if bool(self.origin_type) != (self.origin_id is not None):
+            raise ValidationError({"origin_id": "مرجع المصدر يجب أن يحتوي النوع والمعرف معًا."})
+        if self.currency_code == self.company.base_currency.code:
+            if self.exchange_rate != 1 or self.base_amount != self.amount:
+                raise ValidationError({"exchange_rate": "الالتزام بالعملة الأساسية يجب أن يساوي قيمته الأساسية وسعره واحدًا."})
+        elif self.base_amount != (self.amount * self.exchange_rate).quantize(Decimal("0.0001")):
+            raise ValidationError({"base_amount": "القيمة الأساسية لا تطابق المبلغ مضروبًا في سعر الصرف."})
+
+
+class CashCommitmentPayment(models.Model):
+    """ربط سداد الالتزام بقيد مرحّل موجود دون إنشاء قيد مكرر."""
+
+    commitment = models.ForeignKey(CashCommitment, on_delete=models.PROTECT, related_name="payments")
+    payment_date = models.DateField()
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    base_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name="cash_commitment_payment")
+    reversal_journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_cash_commitment_payment")
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.CharField(max_length=500, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_cash_commitment_payments")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("payment_date", "id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_cash_commit_pay_amount_positive"),
+            models.CheckConstraint(condition=models.Q(base_amount__gt=0), name="ck_cash_commit_pay_base_positive"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.commitment.company_id
+
+
+class CashCommitmentSchedule(models.Model):
+    """جدول دوري يولد استحقاقات قابلة للتوقع؛ التوليد المتكرر آمن."""
+
+    class Frequency(models.TextChoices):
+        MONTHLY = "monthly", "شهري"
+        QUARTERLY = "quarterly", "ربع سنوي"
+        SEMIANNUAL = "semiannual", "نصف سنوي"
+        ANNUAL = "annual", "سنوي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="cash_commitment_schedules")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="cash_commitment_schedules", null=True, blank=True)
+    title = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    currency_code = models.CharField(max_length=3)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, default=1)
+    base_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    frequency = models.CharField(max_length=12, choices=Frequency.choices)
+    interval_months = models.PositiveSmallIntegerField()
+    anchor_day = models.PositiveSmallIntegerField()
+    next_due_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    payable_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="cash_commitment_schedules")
+    active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_cash_commitment_schedules")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("next_due_date", "id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_cash_commit_schedule_amount_positive"),
+            models.CheckConstraint(condition=models.Q(base_amount__gt=0), name="ck_cash_commit_schedule_base_positive"),
+            models.CheckConstraint(condition=models.Q(exchange_rate__gt=0), name="ck_cash_commit_schedule_rate_positive"),
+            models.CheckConstraint(condition=models.Q(interval_months__in=(1, 3, 6, 12)), name="ck_cash_commit_schedule_interval"),
+            models.CheckConstraint(condition=models.Q(anchor_day__gte=1, anchor_day__lte=31), name="ck_cash_commit_schedule_anchor"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+
+class CashCommitmentOccurrence(models.Model):
+    schedule = models.ForeignKey(CashCommitmentSchedule, on_delete=models.PROTECT, related_name="occurrences")
+    due_date = models.DateField()
+    commitment = models.OneToOneField(CashCommitment, null=True, blank=True, on_delete=models.PROTECT, related_name="schedule_occurrence")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("schedule", "due_date"), name="uq_cash_commit_occurrence_date")]
+        ordering = ("due_date", "id")
