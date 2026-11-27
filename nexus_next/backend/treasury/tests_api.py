@@ -608,10 +608,23 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, code="6205", name_ar="عمولات بنكية",
             nature=ChartOfAccount.Nature.EXPENSE,
         )
+        # Fund the bank account first: a real bank fee must not bypass the
+        # treasury rule that prevents posting payments into a negative balance.
+        funding = self._create(
+            source_account=self.bank.pk,
+            document_number="BANK-FUND-FEE-001",
+            description="رصيد متاح قبل خصم العمولة",
+        )
+        self.assertEqual(funding.status_code, 201, funding.data)
+        funded = self.client.post(
+            f"/api/treasury/transactions/{funding.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(funded.status_code, 200, funded.data)
+
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": self.bank.pk,
             "statement_number": "ST-FEE-001", "statement_date": "2026-03-31",
-            "opening_balance": "0.0000", "closing_balance": "-15.0000",
+            "opening_balance": "250.0000", "closing_balance": "235.0000",
         }, format="json")
         self.assertEqual(recon.status_code, 201, recon.data)
         line = self.client.post(
