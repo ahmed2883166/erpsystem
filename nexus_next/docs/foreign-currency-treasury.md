@@ -23,9 +23,11 @@ Configure these roles in the company's account-role settings before posting the 
 
 Only the role needed for the direction of a particular difference is required at that time.
 
-## Opening balances and migration safeguard
+## Opening balances
 
-Foreign treasury opening balances are deliberately not accepted by the current workflow. `TreasuryAccount.opening_balance` is a functional-currency opening value and cannot safely represent a foreign nominal balance without a separate approved opening rate and linked opening journal. Foreign accounts must start at zero until a dedicated foreign-opening-balance workflow is introduced. Existing foreign accounts with legacy opening values are blocked from posting and revaluation; do not clear or rewrite those values to bypass the safeguard. Reconcile them through an approved opening conversion before enabling FX activity.
+A foreign-currency treasury account may be created with an opening nominal amount, an approved company exchange rate and its rate date. The base-currency carrying amount is stored in `TreasuryAccount.opening_balance`; the nominal amount and rate evidence are stored separately. The opening journal debits the treasury GL account in functional currency and retains the foreign-currency snapshot on that journal line, with retained earnings as the opening counterpart. The same transaction initializes `TreasuryFxPosition` with the nominal foreign amount and base-currency carrying value.
+
+The rate must be an exact active company rate dated no later than the opening journal date. The opening balance is immutable after account creation. Legacy foreign accounts with opening values but no complete FX snapshot, posted opening journal and matching FX position remain blocked; do not clear or rewrite their values to bypass the safeguard. Reconcile them through an approved opening conversion before enabling FX activity.
 
 The system also refuses to initialize a new FX position if posted foreign treasury history exists without a position record. This prevents silently rebuilding a position from incomplete history.
 

@@ -370,7 +370,8 @@ export type TreasuryAccount = {
   id: number; company: number; branch: number | null; branch_name: string; account: number;
   account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
   bank_name: string; account_number: string; iban: string; currency_code: string;
-  opening_balance: string; fx_position_foreign_amount: string; fx_position_carrying_base_amount: string; is_active: boolean;
+  opening_balance: string; opening_foreign_amount: string; opening_exchange_rate: string | null; opening_exchange_rate_date: string | null;
+  fx_position_foreign_amount: string; fx_position_carrying_base_amount: string; is_active: boolean;
 };
 export type FxSubledgerRevaluation = {
   id:number; revaluation_date:string; rate_date:string; rate:string; foreign_balance:string;

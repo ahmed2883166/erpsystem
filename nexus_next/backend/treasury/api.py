@@ -176,7 +176,17 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         if account.opening_balance > 0:
             from accounting.models import JournalEntry, JournalLine
             from accounting.services import get_account_for_role, post_journal
-            from companies.models import Branch, FiscalYear
+            from companies.models import Branch, FiscalYear, Currency
+            foreign_opening = account.currency_code != company.base_currency.code
+            opening_currency = Currency.objects.filter(code=account.currency_code, is_active=True).first() if foreign_opening else None
+            if foreign_opening and not opening_currency:
+                raise ValidationError("عملة الرصيد الافتتاحي غير نشطة أو غير موجودة.")
+            fx_snapshot = ({
+                "transaction_currency": opening_currency,
+                "transaction_amount": account.opening_foreign_amount,
+                "exchange_rate": account.opening_exchange_rate,
+                "exchange_rate_date": account.opening_exchange_rate_date,
+            } if foreign_opening else {})
 
             posting_branch = account.branch
             if not posting_branch:
@@ -191,6 +201,10 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             ).order_by("start_date").first()
             if not year:
                 raise ValidationError("لا توجد سنة مالية مفتوحة لتسجيل الرصيد الافتتاحي.")
+            if foreign_opening and account.opening_exchange_rate_date > year.start_date:
+                raise ValidationError({
+                    "opening_exchange_rate_date": "تاريخ سعر الصرف يجب ألا يتجاوز تاريخ القيد الافتتاحي."
+                })
             retained_earnings = get_account_for_role(company, "retained_earnings")
             entry = JournalEntry.objects.create(
                 company=company, branch=posting_branch, fiscal_year=year,
@@ -202,6 +216,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                 JournalLine(
                     entry=entry, account=account.account, debit=account.opening_balance,
                     credit=0, description=f"رصيد افتتاحي - {account.name_ar}",
+                    **fx_snapshot,
                 ),
                 JournalLine(
                     entry=entry, account=retained_earnings, debit=0,
@@ -211,6 +226,13 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             posted = post_journal(entry.pk, actor=self.request.user)
             account.opening_journal_entry = posted
             account.save(update_fields=("opening_journal_entry",))
+            if foreign_opening:
+                from .models import TreasuryFxPosition
+                TreasuryFxPosition.objects.create(
+                    account=account,
+                    foreign_amount=account.opening_foreign_amount,
+                    carrying_base_amount=account.opening_balance,
+                )
 
     @decorators.action(detail=True, methods=("post",), url_path="revalue")
     def revalue(self, request, pk=None):

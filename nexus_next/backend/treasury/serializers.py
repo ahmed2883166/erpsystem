@@ -28,7 +28,7 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         model = TreasuryAccount
         fields = ("id", "company", "branch", "branch_name", "account", "account_code", "account_name",
                   "kind", "code", "name_ar", "bank_name", "account_number", "iban", "currency_code",
-                  "opening_balance", "opening_journal_entry", "fx_position_foreign_amount", "fx_position_carrying_base_amount", "is_active", "created_at")
+                  "opening_balance", "opening_foreign_amount", "opening_exchange_rate", "opening_exchange_rate_date", "opening_journal_entry", "fx_position_foreign_amount", "fx_position_carrying_base_amount", "is_active", "created_at")
         read_only_fields = ("created_at", "opening_journal_entry")
 
     def validate(self, attrs):
@@ -53,11 +53,31 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         if not Currency.objects.filter(code=currency_code, is_active=True).exists():
             raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة من قائمة العملات المعتمدة."})
         opening_balance = attrs.get("opening_balance", getattr(self.instance, "opening_balance", 0))
-        if company and currency_code != company.base_currency.code and opening_balance > 0:
-            raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي للحساب الأجنبي يحتاج إدخال المبلغ الأجنبي وسعره المعتمد؛ ابدأ بصفر حتى تُسجل حركة افتتاحية موثقة."})
-        if opening_balance < 0:
+        opening_foreign_amount = attrs.get("opening_foreign_amount", getattr(self.instance, "opening_foreign_amount", Decimal("0")))
+        opening_exchange_rate = attrs.get("opening_exchange_rate", getattr(self.instance, "opening_exchange_rate", None))
+        opening_exchange_rate_date = attrs.get("opening_exchange_rate_date", getattr(self.instance, "opening_exchange_rate_date", None))
+        if opening_balance < 0 or opening_foreign_amount < 0:
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
-        if self.instance and "opening_balance" in attrs:
+        is_foreign = bool(company and currency_code != company.base_currency.code)
+        if is_foreign:
+            supplied = (opening_foreign_amount > 0 or opening_exchange_rate is not None or opening_exchange_rate_date is not None)
+            if opening_balance > 0 and not supplied:
+                raise serializers.ValidationError({"opening_foreign_amount": "أدخل الرصيد الاسمي الأجنبي وسعر الصرف وتاريخه."})
+            if supplied:
+                if opening_foreign_amount <= 0 or opening_balance <= 0 or opening_exchange_rate is None or opening_exchange_rate <= 0 or not opening_exchange_rate_date:
+                    raise serializers.ValidationError("الرصيد الافتتاحي الأجنبي يتطلب المبلغ الأجنبي والقيمة الأساسية وسعر الصرف وتاريخه.")
+                rate_row = ExchangeRate.objects.filter(
+                    company=company, currency__code=currency_code,
+                    rate_date=opening_exchange_rate_date, rate=opening_exchange_rate,
+                ).first()
+                if not rate_row:
+                    raise serializers.ValidationError({"opening_exchange_rate": "سعر الصرف لا يطابق سعرًا معتمدًا للشركة في التاريخ المحدد."})
+                expected = (opening_foreign_amount * opening_exchange_rate).quantize(Decimal("0.0001"))
+                if expected != opening_balance:
+                    raise serializers.ValidationError({"opening_balance": "القيمة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
+        elif opening_foreign_amount > 0 or opening_exchange_rate is not None or opening_exchange_rate_date is not None:
+            raise serializers.ValidationError("بيانات الرصيد الأجنبي لا تصلح لحساب بالعملة الأساسية.")
+        if self.instance and any(key in attrs for key in ("opening_balance", "opening_foreign_amount", "opening_exchange_rate", "opening_exchange_rate_date")):
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يتغير بعد إنشاء الحساب؛ صحّح الرصيد بقيد افتتاحي أو تسوية معتمدة."})
         if self.instance:
             has_history = (

@@ -26,6 +26,9 @@ class TreasuryAccount(models.Model):
     iban = models.CharField(max_length=64, blank=True)
     currency_code = models.CharField(max_length=3, blank=True, default="")
     opening_balance = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    opening_foreign_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    opening_exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    opening_exchange_rate_date = models.DateField(null=True, blank=True)
     opening_journal_entry = models.OneToOneField(
         JournalEntry, null=True, blank=True, on_delete=models.PROTECT,
         related_name="treasury_account_opening",
@@ -50,10 +53,32 @@ class TreasuryAccount(models.Model):
             raise ValidationError({"account": "الحساب المحاسبي لا يتبع الشركة المحددة."})
         if self.account_id and (self.account.is_group or not self.account.allow_posting or not self.account.is_active):
             raise ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا قابلًا للترحيل."})
-        if self.opening_balance < 0:
+        if self.opening_balance < 0 or self.opening_foreign_amount < 0:
             raise ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
-        if self.company_id and self.currency_code != self.company.base_currency.code and self.opening_balance > 0:
-            raise ValidationError({"opening_balance": "الرصيد الافتتاحي الأجنبي يحتاج مبلغًا اسميًا وسعر صرف معتمدًا؛ لا تستخدم قيمة أساسية غير محددة."})
+        if self.company_id:
+            is_foreign = self.currency_code != self.company.base_currency.code
+            fx_values = (self.opening_foreign_amount, self.opening_exchange_rate, self.opening_exchange_rate_date)
+            supplied_fx_opening = (
+                self.opening_foreign_amount > 0
+                or self.opening_exchange_rate is not None
+                or self.opening_exchange_rate_date is not None
+            )
+            if is_foreign and supplied_fx_opening:
+                if not all(value is not None for value in fx_values) or self.opening_foreign_amount <= 0 or self.opening_exchange_rate <= 0 or self.opening_balance <= 0:
+                    raise ValidationError("الرصيد الافتتاحي الأجنبي يتطلب المبلغ الأجنبي والقيمة الأساسية وسعر الصرف وتاريخه.")
+                approved = ExchangeRate.objects.filter(
+                    company=self.company, currency__code=self.currency_code,
+                    rate_date=self.opening_exchange_rate_date, rate=self.opening_exchange_rate,
+                ).exists()
+                if not approved:
+                    raise ValidationError("سعر الرصيد الافتتاحي لا يطابق سعرًا معتمدًا للشركة.")
+                expected = (self.opening_foreign_amount * self.opening_exchange_rate).quantize(Decimal("0.0001"))
+                if expected != self.opening_balance:
+                    raise ValidationError("القيمة الأساسية الافتتاحية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
+            elif is_foreign and self.opening_balance > 0:
+                raise ValidationError({"opening_balance": "أدخل المبلغ الافتتاحي بالعملة الأجنبية وسعر الصرف المعتمد."})
+            elif not is_foreign and any(value not in (None, Decimal("0")) for value in fx_values):
+                raise ValidationError("لا تستخدم بيانات رصيد أجنبي مع حساب بالعملة الأساسية.")
 
     def save(self, *args, **kwargs):
         if not self.currency_code and self.company_id:
