@@ -152,29 +152,6 @@ class DeliveryLineInputSerializer(serializers.Serializer):
     expiry_date = serializers.DateField(required=False, allow_null=True)
     order_line = serializers.PrimaryKeyRelatedField(queryset=SalesOrderLine.objects.select_related("order"), required=False, allow_null=True)
 
-    def _validate_delivery_quantities(self, lines, exclude_invoice_id=None):
-        """تحقق من الكميات المفوترة والمحجوزة لكل بند تسليم."""
-        for line in lines:
-            delivery_line = line.get("delivery_line")
-            if not delivery_line:
-                continue
-            quantity = line.get("quantity")
-            if quantity is None:
-                quantity = delivery_line.quantity
-            if quantity <= 0 or quantity > delivery_line.quantity:
-                raise serializers.ValidationError({
-                    "lines": f"كمية الفاتورة للصنف {delivery_line.product.code} يجب أن تكون أكبر من صفر ولا تتجاوز كمية التسليم."
-                })
-            prior = SalesInvoiceLine.objects.filter(delivery_line_id=delivery_line.pk)
-            if exclude_invoice_id:
-                prior = prior.exclude(invoice_id=exclude_invoice_id)
-            invoiced = prior.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-            if invoiced + quantity > delivery_line.quantity:
-                remaining = delivery_line.quantity - invoiced
-                raise serializers.ValidationError({
-                    "lines": f"الكمية المتبقية للفوترة للصنف {delivery_line.product.code} هي {remaining} فقط."
-                })
-
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
@@ -688,6 +665,29 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         ):
             return "pending"
         return approval.status
+
+    def _validate_delivery_quantities(self, lines, exclude_invoice_id=None):
+        """تحقق من الكميات المفوترة والمحجوزة لكل بند تسليم."""
+        for line in lines:
+            delivery_line = line.get("delivery_line")
+            if not delivery_line:
+                continue
+            quantity = line.get("quantity")
+            if quantity is None:
+                quantity = delivery_line.quantity
+            if quantity <= 0 or quantity > delivery_line.quantity:
+                raise serializers.ValidationError({
+                    "lines": f"كمية الفاتورة للصنف {delivery_line.product.code} يجب أن تكون أكبر من صفر ولا تتجاوز كمية التسليم."
+                })
+            prior = SalesInvoiceLine.objects.filter(delivery_line_id=delivery_line.pk)
+            if exclude_invoice_id:
+                prior = prior.exclude(invoice_id=exclude_invoice_id)
+            invoiced = prior.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if invoiced + quantity > delivery_line.quantity:
+                remaining = delivery_line.quantity - invoiced
+                raise serializers.ValidationError({
+                    "lines": f"الكمية المتبقية للفوترة للصنف {delivery_line.product.code} هي {remaining} فقط."
+                })
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
