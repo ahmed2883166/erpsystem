@@ -1985,7 +1985,9 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         schedule = serializer.instance
         self._write(schedule.company_id)
         if schedule.occurrences.filter(commitment__isnull=False).exists():
-            raise ValidationError("لا يمكن تعديل جدول بعد توليد استحقاقاته؛ أوقفه وأنشئ جدولًا جديدًا.")
+            changed_fields = set(serializer.validated_data) - {"active"}
+            if changed_fields:
+                raise ValidationError("بعد توليد الاستحقاقات لا يمكن تعديل تفاصيل الجدول؛ يمكنك إيقافه أو إعادة تفعيله فقط.")
         company = serializer.validated_data.get("company", schedule.company)
         if company.pk != schedule.company_id:
             raise ValidationError("لا يمكن نقل جدول دوري بين الشركات.")
