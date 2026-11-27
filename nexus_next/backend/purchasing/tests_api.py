@@ -1,6 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+import threading
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
@@ -340,6 +343,40 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
         self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).exists())
+
+    def test_receipt_posting_rolls_back_inventory_and_journal_when_later_step_fails(self):
+        created = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-ROLLBACK", "receipt_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        receipt_id = created.data["id"]
+        movement = StockMovement.objects.get(movement_number="PR-GR-ROLLBACK")
+
+        original_post = post_stock_movement
+
+        def post_then_fail(*args, **kwargs):
+            original_post(*args, **kwargs)
+            raise RuntimeError("simulated failure after inventory and journal posting")
+
+        with patch("purchasing.services.post_stock_movement", side_effect=post_then_fail):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json"
+                )
+
+        movement.refresh_from_db()
+        self.assertEqual(movement.status, StockMovement.Status.DRAFT)
+        self.assertFalse(
+            StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists()
+        )
+        self.assertFalse(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).exists()
+        )
+        receipt = self.client.get(f"/api/purchasing/receipts/{receipt_id}/")
+        self.assertEqual(receipt.status_code, 200, receipt.data)
+        self.assertIsNone(receipt.data["journal_number"])
 
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
@@ -4191,3 +4228,79 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         )
         self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
         self.assertEqual(Decimal(after_reversal.data["totals"]["total_due"]), Decimal("0"))
+
+class PurchaseReceiptConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        self.client = APIClient()
+        PurchasingWorkflowTests.setUp(self)
+
+    def test_concurrent_receipts_respect_reserved_purchase_order_quantity(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Concurrent row-locking regression requires PostgreSQL.")
+
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-CONCURRENT-RECEIPT", "order_date": "2026-03-01",
+            "lines": [{"product": self.product.pk, "quantity": "10", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_id = order.data["id"]
+        order_line_id = order.data["line_items"][0]["id"]
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        receipt_ids = []
+        for number, quantity in (("GR-CONCURRENT-A", "6"), ("GR-CONCURRENT-B", "4")):
+            receipt = self.client.post("/api/purchasing/receipts/", {
+                "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+                "purchase_order": order_id, "receipt_number": number, "receipt_date": "2026-03-10",
+                "lines": [{
+                    "product": self.product.pk, "quantity": quantity, "unit_cost": "100",
+                    "purchase_order_line": order_line_id,
+                }],
+            }, format="json")
+            self.assertEqual(receipt.status_code, 201, receipt.data)
+            receipt_ids.append(receipt.data["id"])
+
+        # The draft-receipt reservation must reject any additional quantity
+        # before posting, while the two valid receipts are posted concurrently.
+        excess = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-CONCURRENT-EXCESS", "receipt_date": "2026-03-10",
+            "lines": [{
+                "product": self.product.pk, "quantity": "1", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(excess.status_code, 400, excess.data)
+
+        barrier = threading.Barrier(2)
+
+        def post_receipt(receipt_id):
+            from django.db import close_old_connections
+            close_old_connections()
+            client = APIClient()
+            user = get_user_model().objects.get(pk=self.user.pk)
+            client.force_authenticate(user)
+            barrier.wait(timeout=10)
+            try:
+                response = client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
+                return response.status_code, response.data
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(post_receipt, receipt_ids))
+
+        self.assertEqual([status for status, _ in results].count(200), 2, results)
+        order_line = PurchaseOrderReceiptLine.objects.filter(order_line_id=order_line_id).aggregate(
+            total=Sum("quantity")
+        )["total"]
+        self.assertEqual(order_line, Decimal("10"))
+        posted_receipts = StockMovement.objects.filter(
+            movement_number__in=("PR-GR-CONCURRENT-A", "PR-GR-CONCURRENT-B"),
+            status=StockMovement.Status.POSTED,
+        ).count()
+        self.assertEqual(posted_receipts, 2)
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("10"))
