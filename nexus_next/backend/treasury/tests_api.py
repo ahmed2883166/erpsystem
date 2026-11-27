@@ -977,6 +977,19 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(repeated.data["imported"], 0)
         self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
 
+        next_recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "PREVIEW-002",
+            "statement_date": "2026-03-31", "opening_balance": "15.0000", "closing_balance": "15.0000",
+        }, format="json")
+        previous_statement = self.client.post(
+            f"/api/treasury/reconciliations/{next_recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(previous_statement.status_code, 200, previous_statement.data)
+        self.assertEqual(previous_statement.data["new_count"], 0)
+        self.assertEqual(previous_statement.data["duplicate_count"], 3)
+
     def test_bank_statement_xlsx_import_preview(self):
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "XLSX-001",
