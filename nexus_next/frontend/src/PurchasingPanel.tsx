@@ -941,6 +941,21 @@ const postInvoice = async (id: number) => {
         <p className="inventory-report-note">يتم عرض أثر الرسملة حسب الفرع، مع فصل قيمة المخزون عن تكلفة المبيعات وخسائر المخزون، وربط كل توزيع بقيده المحاسبي.</p>
       </div>}
     </div>}
+    {tab === "aging" && agingView === "analysis" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ الفاتورة<input type="date" value={purchaseAnalysisFrom} onChange={e=>{setPurchaseAnalysisFrom(e.target.value);setPurchaseAnalysisReport(null);}}/></label><label>إلى تاريخ الفاتورة<input type="date" value={purchaseAnalysisTo} onChange={e=>{setPurchaseAnalysisTo(e.target.value);setPurchaseAnalysisReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseAnalysisReport()}>{busy?"جارٍ التحميل…":"عرض تحليل المشتريات"}</button></div>
+      {purchaseAnalysisReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>صافي المشتريات</span><strong>{money(purchaseAnalysisReport.totals.net_purchases)}</strong></div>
+          <div><span>مرتجعات الموردين</span><strong>{money(purchaseAnalysisReport.totals.returned_net)}</strong></div>
+          <div><span>ضريبة غير قابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.nonrecoverable_tax)}</strong></div>
+          <div><span>التكلفة بعد الضريبة غير القابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.total_cost)}</strong></div>
+          <div><span>عدد الفواتير</span><strong>{purchaseAnalysisReport.totals.invoice_count}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>المورد</th><th>الصنف / حساب المصروف</th><th>الفرع / المخزن</th><th>الكمية</th><th>المرتجع</th><th>صافي المشتريات</th><th>ضريبة غير قابلة للخصم</th><th>التكلفة</th></tr></thead><tbody>{purchaseAnalysisReport.rows.map((row,index)=><tr key={row.kind+"-"+row.supplier_id+"-"+(row.product_id||row.expense_account_id)+"-"+row.branch_id+"-"+index}><td>{row.kind==="inventory"?"مخزون":"مصروف مباشر"}</td><td>{row.supplier_name}</td><td>{row.kind==="inventory"?(row.product_code+" · "+row.product_name):(row.expense_account_code+" · "+row.expense_account_name)}</td><td>{row.branch_name}<small>{row.warehouse_name}</small></td><td>{row.quantity}</td><td>{row.returned_quantity}</td><td>{money(row.net_purchases)}</td><td>{money(row.nonrecoverable_tax)}</td><td>{money(row.total_cost)}</td></tr>)}</tbody></table>{purchaseAnalysisReport.rows.length===0&&<div className="table-empty">لا توجد فواتير مشتريات مرحلة في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">يحلل التقرير فواتير المشتريات المرحلة حسب المورد والصنف أو حساب المصروف والفرع والمخزن والنشاط، ويخصم مرتجعات الموردين المرحلة.</p>
+      </div>}
+    </div>}
     {tab === "aging" && agingView === "matching" && <div className="inventory-form">
       <div className="inventory-form-row"><label>من تاريخ الأمر<input type="date" value={matchingReportFrom} onChange={e=>{setMatchingReportFrom(e.target.value);setPurchaseMatchingReport(null);}}/></label><label>إلى تاريخ الأمر<input type="date" value={matchingReportTo} onChange={e=>{setMatchingReportTo(e.target.value);setPurchaseMatchingReport(null);}}/></label></div>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseMatchingReport()}>{busy?"جارٍ التحميل…":"عرض تقرير المطابقة"}</button>{purchaseMatchingReport && <a className="subtle-button" href={`/api/purchasing/orders/matching-report-export-excel/?company=${companyId}${matchingReportFrom? `&date_from=${matchingReportFrom}`:""}${matchingReportTo? `&date_to=${matchingReportTo}`:""}`}>تصدير Excel</a>}</div>
