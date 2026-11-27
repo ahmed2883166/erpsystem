@@ -296,7 +296,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(self.client.get(f"/api/purchasing/orders/{confirmed_id}/").status_code, 200)
 
     def test_draft_purchase_invoice_can_be_deleted_only_without_financial_dependencies(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         payload = {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-DRAFT-DELETE", "invoice_date": "2026-03-10",
@@ -379,7 +379,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertIsNone(receipt.data["journal_number"])
 
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("2"))
         self.assertEqual(balance.inventory_value, Decimal("200.0000"))
@@ -472,7 +472,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted.data["grand_total"], "0.7566")
 
     def test_reposting_receipt_or_invoice_does_not_duplicate_stock_or_journals(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         first_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(first_balance.quantity, Decimal("2"))
         duplicate_receipt = self.client.post(
@@ -665,7 +665,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(missing_account.status_code, 400, missing_account.data)
 
     def test_supplier_payment_reduces_invoice_balance_and_blocks_overpayment(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice_response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-PAY-001", "invoice_date": "2026-03-10",
@@ -729,7 +729,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
 
     def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-BRANCH-PAY", "invoice_date": "2026-03-10",
@@ -772,7 +772,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
 
     def test_supplier_statement_reports_opening_balance_and_running_payable(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice_response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-STAT-001", "invoice_date": "2026-03-10",
@@ -811,7 +811,7 @@ class PurchasingWorkflowTests(APITestCase):
     def test_supplier_aging_groups_open_balance_by_days_past_due(self):
         self.supplier.payment_terms_days = 0
         self.supplier.save(update_fields=["payment_terms_days"])
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-AGE-001", "invoice_date": "2026-03-10",
@@ -1040,7 +1040,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(order["line_items"][0]["received_quantity"], "10.0000")
 
     def test_invoice_rejects_price_mismatch_against_grni(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-002", "invoice_date": "2026-03-10",
@@ -1096,7 +1096,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_purchase_invoice_uses_configured_recoverable_input_tax_code(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="INPUT-14", name_ar="ضريبة مدخلات",
             category=TaxCode.Category.STANDARD, rate=Decimal("14"),
@@ -1123,7 +1123,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
     def test_legacy_purchase_tax_without_tax_code_matches_historical_vat_input_posting(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         created = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-LEGACY-TAX-01", "invoice_date": "2026-03-10",
@@ -1148,7 +1148,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
 
     def test_nonrecoverable_purchase_tax_is_split_between_remaining_stock_and_consumed_cogs_by_branch(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         second_branch = Branch.objects.create(
             company=self.company, code="BR-02", name_ar="الفرع الثاني",
         )
@@ -1257,7 +1257,7 @@ class PurchasingWorkflowTests(APITestCase):
     def test_nonrecoverable_purchase_tax_revalues_fifo_layers_and_remaining_inventory(self):
         self.product.costing_method = Product.CostingMethod.FIFO
         self.product.save(update_fields=("costing_method",))
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="FIFO-INPUT-NR",
             name_ar="ضريبة غير قابلة للخصم - FIFO",
@@ -1282,7 +1282,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(allocation.cogs_amount, Decimal("0.0000"))
 
     def test_nonrecoverable_purchase_tax_on_adjusted_stock_is_allocated_to_inventory_loss(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         adjustment = StockMovement.objects.create(
             company=self.company, movement_number="TAX-ADJ-OUT-01",
             movement_type=StockMovement.MovementType.ADJUSTMENT, movement_date=date(2026, 3, 11),
@@ -1324,7 +1324,7 @@ class PurchasingWorkflowTests(APITestCase):
             company=self.company, max_purchase_invoice_amount=Decimal("200"),
             created_by=self.user, updated_by=self.user,
         )
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-APPROVAL-001", "invoice_date": "2026-03-10",
@@ -1369,7 +1369,7 @@ class PurchasingWorkflowTests(APITestCase):
             company=self.company, max_payment_amount=Decimal("50"),
             created_by=self.user, updated_by=self.user,
         )
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-PAY-APPROVAL", "invoice_date": "2026-03-10",
@@ -1406,7 +1406,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
 
     def test_foreign_currency_nonrecoverable_tax_is_capitalized_in_base_currency_and_excluded_from_input_vat(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         ExchangeRate.objects.create(
             company=self.company, currency=usd,
@@ -1449,7 +1449,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
 
     def test_editing_draft_foreign_purchase_invoice_recalculates_both_currency_totals(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         ExchangeRate.objects.create(
             company=self.company, currency=usd,
@@ -1483,7 +1483,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(updated.data["grand_total"], "342.0000")
 
     def test_foreign_supplier_invoice_partial_and_final_payments_post_realized_fx(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 10), rate=Decimal("50"))
         ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 11), rate=Decimal("48"))
@@ -1534,7 +1534,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(refreshed["balance_due"], "0.0000")
 
     def test_supplier_fx_revaluation_can_be_reversed_before_later_payments(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         for rate_date, rate in (
             (date(2026, 3, 10), "50"), (date(2026, 3, 31), "53"),
@@ -1589,7 +1589,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(reverse_again.status_code, 400, reverse_again.data)
 
     def test_supplier_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_payments(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         for rate_date, rate in (
             (date(2026, 3, 10), "50"), (date(2026, 3, 31), "53"),
@@ -1691,7 +1691,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(repeated.status_code, 400, repeated.data)
 
     def test_latest_supplier_payment_can_be_reversed_with_linked_journal(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-REV-001", "invoice_date": "2026-03-10",
@@ -1834,7 +1834,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_purchase_invoice_accepts_exempt_zero_rate_code_even_when_input_is_not_recoverable(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="INPUT-EXEMPT", name_ar="مشتريات معفاة",
             category=TaxCode.Category.EXEMPT, rate=Decimal("0"),
@@ -1851,7 +1851,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_supplier_return_releases_only_original_receipt_cost_and_reduces_payable(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice_response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-RETURN-001", "invoice_date": "2026-03-10",
@@ -1925,7 +1925,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_supplier_refund_posts_against_return_credit_and_rejects_over_refund(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-REFUND-001", "invoice_date": "2026-03-10",
@@ -2085,7 +2085,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_unpaid_foreign_supplier_return_uses_invoice_historical_rate(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         ExchangeRate.objects.create(
             company=self.company, currency=usd,
@@ -2141,7 +2141,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_reversing_supplier_return_restores_original_cost_layers_and_vat(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-RETURN-REV-001", "invoice_date": "2026-03-10",
@@ -2228,7 +2228,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
 
     def test_reversed_supplier_fx_revaluation_allows_foreign_currency_return(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         for rate_date, rate in (
             (date(2026, 3, 10), "50"),
@@ -2609,7 +2609,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertTrue(response.data["gl_reconciliation"]["reconciled"])
 
     def test_grni_aging_report_keeps_receipt_with_draft_supplier_invoice(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk,
             "supplier": self.supplier.pk,
@@ -2630,7 +2630,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_partial_supplier_invoices_clear_grni_by_billed_quantity(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         first = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-PART-001", "invoice_date": "2026-03-10",
@@ -2684,7 +2684,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertTrue(after_second.data["gl_reconciliation"]["reconciled"])
 
     def test_partial_supplier_invoices_cannot_overbill_a_receipt_line(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         first = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-OVER-001", "invoice_date": "2026-03-10",
@@ -2718,7 +2718,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_nonrecoverable_tax_waits_for_full_receipt_billing_then_capitalizes_once(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         tax_code = TaxCode.objects.create(
             company=self.company, country="EG", code="NR14", name_ar="ضريبة غير قابلة للخصم",
             category=TaxCode.Category.STANDARD, rate=Decimal("14"),
@@ -2789,7 +2789,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_draft_supplier_invoice_reserves_only_its_billed_quantity(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         first = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-DRAFT-RESERVE-001", "invoice_date": "2026-03-10",
@@ -2940,7 +2940,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_duplicate_supplier_invoice_number_is_rejected_without_duplicate_posting(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         payload = {
             "company": self.company.pk,
             "supplier": self.supplier.pk,
@@ -3223,7 +3223,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_supplier_returns_accumulate_across_multiple_partial_returns(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-MULTI-RETURN", "invoice_date": "2026-03-10",
@@ -3269,7 +3269,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_partial_payments_and_supplier_return_reconcile_supplier_statement_and_ap(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-PAY-RETURN-001", "invoice_date": "2026-03-10",
@@ -3346,7 +3346,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(ap_totals["credit"], Decimal("228.0000"))
 
     def test_grni_aging_uses_invoice_posting_date_cutoff_and_reconciles_gl(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-GRNI-CUTOFF", "invoice_date": "2026-03-12",
@@ -3401,7 +3401,7 @@ class PurchasingWorkflowTests(APITestCase):
             AccountRole.objects.create(company=self.company, role=role, account=account)
 
         # Purchase: receipt creates inventory and GRNI; supplier invoice clears GRNI.
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         purchase = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk,
             "supplier": self.supplier.pk,
@@ -3516,7 +3516,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
 
 
     def test_supplier_payment_rejects_amount_above_available_cash_or_bank_balance(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-LOW-TREASURY", "invoice_date": "2026-03-10",
@@ -3560,7 +3560,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             )
 
     def test_backdated_supplier_payment_respects_later_treasury_withdrawals(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-BACKDATED-TREASURY", "invoice_date": "2026-03-10",
@@ -3775,7 +3775,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
 
 
     def test_landed_cost_posts_across_branches_without_duplicate_supplier_payable_and_can_reverse(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         second_branch = Branch.objects.create(
             company=self.company, code="LC-BR-02", name_ar="فرع رسملة ثان",
         )
@@ -4078,7 +4078,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
 
 
     def test_purchase_analysis_report_groups_inventory_and_direct_expense_by_supplier(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         inventory_invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-ANALYSIS-001", "invoice_date": "2026-03-11",
@@ -4135,7 +4135,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         )
 
     def test_supplier_aging_excludes_credit_balance_after_return_refund_and_reversal(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk,
             "receipt": receipt_id, "invoice_number": "INV-AGE-REFUND-001",
@@ -4312,7 +4312,7 @@ class PurchaseInvoiceIntegrityTests(TransactionTestCase):
         PurchasingWorkflowTests.setUp(self)
 
     def test_invoice_posting_rolls_back_posted_journal_when_later_step_fails(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-ATOMIC-ROLLBACK", "invoice_date": "2026-03-10",
@@ -4353,7 +4353,7 @@ class PurchaseInvoiceIntegrityTests(TransactionTestCase):
         if connection.vendor != "postgresql":
             self.skipTest("Concurrent invoice row-locking regression requires PostgreSQL.")
 
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
         invoice_ids = []
         for number in ("INV-CONCURRENT-PART-A", "INV-CONCURRENT-PART-B"):
             invoice = self.client.post("/api/purchasing/invoices/", {
