@@ -12,11 +12,11 @@ from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate, FiscalYear
-from inventory.models import StockMovement
+from inventory.models import StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
 
 def _account(company, role):
@@ -122,11 +122,33 @@ def post_sales_invoice(invoice_id, user):
             raise ValidationError("تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم.")
         if delivery.stock_movement.status != StockMovement.Status.POSTED:
             raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
-        expected = list(delivery.stock_movement.lines.all())
-        if len(lines) != len(expected) or {x.delivery_line_id for x in lines} != {x.pk for x in expected}:
-            raise ValidationError("أصناف الفاتورة لا تطابق إذن التسليم.")
-        if any(not line.delivery_line_id or line.product.product_type != "goods" for line in lines):
-            raise ValidationError("فاتورة التسليم يجب أن تحتوي على أصناف مخزنية مطابقة للإذن.")
+        expected_ids = set(delivery.stock_movement.lines.values_list("id", flat=True))
+        delivery_line_ids = [line.delivery_line_id for line in lines]
+        if (
+            any(not line_id for line_id in delivery_line_ids)
+            or len(delivery_line_ids) != len(set(delivery_line_ids))
+            or not set(delivery_line_ids).issubset(expected_ids)
+        ):
+            raise ValidationError("بنود الفاتورة يجب أن تكون بنودًا صحيحة وغير مكررة من إذن التسليم.")
+        locked_delivery_lines = {
+            row.pk: row
+            for row in StockMovementLine.objects.select_for_update()
+            .filter(pk__in=delivery_line_ids, movement_id=delivery.stock_movement_id)
+            .order_by("pk")
+        }
+        if len(locked_delivery_lines) != len(set(delivery_line_ids)):
+            raise ValidationError("بعض بنود الفاتورة لا تتبع إذن التسليم المحدد.")
+        for line in lines:
+            delivery_line = locked_delivery_lines[line.delivery_line_id]
+            if line.product.product_type != "goods" or line.product_id != delivery_line.product_id:
+                raise ValidationError("فاتورة التسليم يجب أن تحتوي على أصناف مخزنية مطابقة للإذن.")
+            if line.quantity <= 0 or line.quantity > delivery_line.quantity:
+                raise ValidationError("كمية الفاتورة لا يجوز أن تتجاوز كمية بند إذن التسليم.")
+            previously_reserved = SalesInvoiceLine.objects.filter(
+                delivery_line_id=delivery_line.pk
+            ).exclude(invoice_id=invoice.pk).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if previously_reserved + line.quantity > delivery_line.quantity:
+                raise ValidationError("إجمالي الكميات المفوترة أو المحجوزة يتجاوز كمية إذن التسليم.")
     else:
         if not invoice.branch_id or any(
             line.delivery_line_id or line.product.product_type != "service"
