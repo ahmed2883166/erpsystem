@@ -149,7 +149,7 @@ export type SupplierQuotation = {
 
 export type PurchaseAnalysisReport = {
   company:number; date_from:string|null; date_to:string|null; branch:number|null;supplier:number|null;product:number|null;activity:number|null;
-  totals:{purchase_net:string;returned_net:string;net_purchases:string;nonrecoverable_tax:string;total_cost:string;tax_amount:string;invoice_count:number;line_count:number};
+  totals:{purchase_net:string;returned_net:string;net_purchases:string;nonrecoverable_tax:string;inventory_nonrecoverable_tax:string;total_cost:string;tax_amount:string;invoice_count:number;line_count:number};
   rows:{
     kind:"inventory"|"direct_expense";supplier_id:number;supplier_name:string;
     product_id:number|null;product_code:string;product_name:string;
