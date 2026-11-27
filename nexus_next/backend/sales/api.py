@@ -1231,7 +1231,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
 
         def safe_text(value):
             value = str(value or "")
-            return "'" + value if value[:1] in ("=", "+", "-", "@", "\\t", "\\r") else value
+            return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
 
         workbook = Workbook()
         summary = workbook.active
