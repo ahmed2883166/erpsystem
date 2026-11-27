@@ -520,3 +520,42 @@ def reverse_treasury_fx_revaluation(*, revaluation_id, entry_date, user=None):
         "reversal_journal_entry", "reversed_at", "reversed_by",
     ))
     return revaluation
+
+
+@transaction.atomic
+def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
+    """Reverse a standalone base-currency treasury document and synchronize its lifecycle."""
+    doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
+        "company__base_currency", "branch", "source_account", "destination_account", "journal_entry",
+    ).get(pk=transaction_id)
+    if doc.status != TreasuryTransaction.Status.POSTED:
+        raise ValidationError("يمكن عكس مستند خزينة مرحّل فقط.")
+    if not doc.journal_entry_id or doc.journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("القيد الأصلي غير موجود أو ليس مرحّلًا؛ لا يمكن عكس المستند.")
+    if doc.journal_entry.source_type != JournalEntry.Source.MANUAL:
+        raise ValidationError("هذه حركة مرتبطة بمستند تشغيلي؛ يجب عكسها من الوحدة الأصلية وليس من الخزينة.")
+    base_code = doc.company.base_currency.code
+    if (doc.source_account.currency_code != base_code
+        or (doc.destination_account_id and doc.destination_account.currency_code != base_code)
+        or doc.transaction_currency_id is not None or doc.transaction_amount is not None
+        or doc.exchange_rate is not None):
+        raise ValidationError("عكس حركات العملات الأجنبية غير متاح في هذه المرحلة حتى تتم معالجة مركز العملة وفروق الصرف بالكامل.")
+    from hr.models import PayrollPosting
+    if PayrollPosting.objects.filter(payment_treasury_transaction_id=doc.pk).exists():
+        raise ValidationError("حركة صرف المرتبات مرتبطة بدورة المرتبات؛ عالجها من شاشة المرتبات.")
+    from assets.models import FixedAsset
+    if FixedAsset.objects.filter(Q(acquisition_treasury_transaction_id=doc.pk) | Q(disposal_treasury_transaction_id=doc.pk)).exists():
+        raise ValidationError("حركة اقتناء أو استبعاد أصل ثابت؛ عالجها من دورة الأصول.")
+    from .models import BankStatementLine
+    if BankStatementLine.objects.filter(matched_transaction_id=doc.pk).exists():
+        raise ValidationError("الحركة مرتبطة بتسوية بنكية؛ فك المطابقة أو عالج التسوية أولًا قبل العكس.")
+    if entry_date < doc.transaction_date:
+        raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ مستند الخزينة الأصلي.")
+    from accounting.services import reverse_operational_journal
+    reversal = reverse_operational_journal(doc.journal_entry_id, user, entry_date, expected_source=JournalEntry.Source.MANUAL)
+    TreasuryTransaction.objects.filter(pk=doc.pk, status=TreasuryTransaction.Status.POSTED).update(
+        status=TreasuryTransaction.Status.REVERSED, reversal_journal_entry=reversal,
+        reversed_at=timezone.now(), reversed_by=user,
+    )
+    doc.refresh_from_db()
+    return doc
