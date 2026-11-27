@@ -24,6 +24,7 @@ def _money(value):
 
 def _foreign_position(account):
     """قفل مركز العملة، مع قبول الافتتاحي الأجنبي الموثق فقط."""
+    created = False
     position = TreasuryFxPosition.objects.select_for_update().filter(account=account).first()
     if position:
         if account.opening_journal_entry_id and account.opening_foreign_amount <= 0:
