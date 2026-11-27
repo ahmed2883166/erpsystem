@@ -926,7 +926,7 @@ class StockTransferLifecycleTests(StockPostingServiceTests):
         self.assertEqual(in_transit.quantity, Decimal("10"))
         self.assertEqual(StockTransferReceipt.objects.filter(transfer=transfer).count(), 0)
 
-    def test_cannot_receive_before_dispatch_or_receive_duplicate_line(self):
+    def test_cannot_receive_before_dispatch(self):
         from .transfer_services import receive_stock_transfer
         from rest_framework.exceptions import ValidationError
 
