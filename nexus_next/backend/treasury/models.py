@@ -84,6 +84,7 @@ class TreasuryTransaction(models.Model):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
         VOID = "void", "ملغي"
+        REVERSED = "reversed", "معكوس"
 
     class CashFlowCategory(models.TextChoices):
         OPERATING = "operating", "تشغيلي"
@@ -115,6 +116,9 @@ class TreasuryTransaction(models.Model):
     reference = models.CharField(max_length=120, blank=True)
     cash_flow_category = models.CharField(max_length=12, choices=CashFlowCategory.choices, default=CashFlowCategory.OPERATING)
     journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_transaction")
+    reversal_journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_transaction_reversal")
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_transactions_reversed")
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_treasury_transactions")
     created_at = models.DateTimeField(auto_now_add=True)
     posted_at = models.DateTimeField(null=True, blank=True)
@@ -189,7 +193,7 @@ class TreasuryTransaction(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             old = type(self).objects.filter(pk=self.pk).first()
-            if old and old.status == self.Status.POSTED:
+            if old and old.status in (self.Status.POSTED, self.Status.REVERSED):
                 raise ValidationError("المستند المرحّل غير قابل للتعديل.")
             if old:
                 from hr.models import PayrollPosting
