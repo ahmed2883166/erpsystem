@@ -323,3 +323,28 @@ class BankStatementLine(models.Model):
             models.UniqueConstraint(fields=("reconciliation", "line_number"), name="uq_bank_recon_line_no"),
             models.UniqueConstraint(fields=("reconciliation", "matched_transaction"), condition=models.Q(matched_transaction__isnull=False), name="uq_bank_recon_matched_tx"),
         ]
+
+
+class BankStatementMatchAllocation(models.Model):
+    """جزء من حركة دفترية مخصص لمطابقة سطر أو أكثر من كشف البنك."""
+    line = models.ForeignKey(
+        BankStatementLine, on_delete=models.CASCADE, related_name="allocations",
+    )
+    transaction = models.ForeignKey(
+        TreasuryTransaction, on_delete=models.PROTECT, related_name="reconciliation_allocations",
+    )
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("line", "transaction"), name="uq_bank_line_transaction_allocation"),
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_bank_match_allocation_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.line_id and self.transaction_id:
+            if self.line.reconciliation.company_id != self.transaction.company_id:
+                raise ValidationError("الحركة الدفترية وسطر كشف البنك يجب أن يتبعا الشركة نفسها.")
