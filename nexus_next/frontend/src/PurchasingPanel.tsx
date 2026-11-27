@@ -913,6 +913,7 @@ const postInvoice = async (id: number) => {
           <div><span>المخزون المتبقي</span><strong>{money(landedCostReport.totals.inventory)}</strong></div>
           <div><span>تكلفة المبيعات</span><strong>{money(landedCostReport.totals.cogs)}</strong></div>
           <div><span>خسائر المخزون</span><strong>{money(landedCostReport.totals.adjustment_loss)}</strong></div>
+          <div><span>رسملات معكوسة</span><strong>{money(landedCostReport.totals.reversed)}</strong></div>
         </div>
         <div className="data-table-wrap"><table><thead><tr><th>مستند الرسملة</th><th>فاتورة المصروف</th><th>المورد</th><th>الصنف</th><th>الفرع</th><th>المخزون</th><th>تكلفة المبيعات</th><th>الخسائر</th><th>القيد</th></tr></thead><tbody>{landedCostReport.rows.map((row,index)=><tr key={row.document_id+"-"+row.expense_line_id+"-"+row.branch_id+"-"+index}><td>{row.document_number}<small>{row.document_date}</small></td><td>{row.source_invoice_number}</td><td>{row.supplier_name}</td><td>{row.product_code} · {row.product_name}</td><td>{row.branch_name}</td><td>{money(row.inventory_amount)}</td><td>{money(row.cogs_amount)}</td><td>{money(row.adjustment_loss_amount)}</td><td>{row.journal_entry||"—"}</td></tr>)}</tbody></table>{landedCostReport.rows.length===0&&<div className="table-empty">لا توجد رسملات في الفترة المحددة.</div>}</div>
         <p className="inventory-report-note">يتم عرض أثر الرسملة حسب الفرع، مع فصل قيمة المخزون عن تكلفة المبيعات وخسائر المخزون، وربط كل توزيع بقيده المحاسبي.</p>
