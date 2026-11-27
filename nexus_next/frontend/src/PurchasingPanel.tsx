@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import PurchaseDocumentPrint, { type PurchasePrintDocument } from "./PurchaseDocumentPrint";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport, type PurchaseMatchingReport } from "./api";
 
 type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -51,6 +51,9 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"manual"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
   const [landedCostReportFrom, setLandedCostReportFrom] = useState("");
   const [landedCostReportTo, setLandedCostReportTo] = useState("");
+  const [purchaseMatchingReport, setPurchaseMatchingReport] = useState<PurchaseMatchingReport | null>(null);
+  const [matchingReportFrom, setMatchingReportFrom] = useState("");
+  const [matchingReportTo, setMatchingReportTo] = useState("");
   const [refundForm, setRefundForm] = useState({ return_document: "", refund_number: "", refund_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "", notes: "" });
   const [returnForm, setReturnForm] = useState({ invoice: "", return_number: "", return_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [returnLines, setReturnLines] = useState<{ invoice_line: string; quantity: string }[]>([{ invoice_line: "", quantity: "1" }]);
@@ -59,7 +62,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [statementTo, setStatementTo] = useState("");
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
-  const [agingView, setAgingView] = useState<"supplier" | "grni" | "landed-cost">("supplier");
+  const [agingView, setAgingView] = useState<"supplier" | "grni" | "landed-cost" | "matching">("supplier");
   const [grniReport, setGrniReport] = useState<GRNIAgingReport | null>(null);
   const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
@@ -239,6 +242,14 @@ const loadAging = async () => {
     setBusy(true);setError("");
     try { setLandedCostReport(await purchasingApi.landedCostReport(companyId,{date_from:landedCostReportFrom||undefined,date_to:landedCostReportTo||undefined})); }
     catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تقرير رسملة التكلفة."); }
+    finally { setBusy(false); }
+  };
+  const loadPurchaseMatchingReport = async () => {
+    if(!companyId)return;
+    if(matchingReportFrom && matchingReportTo && matchingReportFrom>matchingReportTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setBusy(true);setError("");
+    try { setPurchaseMatchingReport(await purchasingApi.purchaseMatchingReport(companyId,{date_from:matchingReportFrom||undefined,date_to:matchingReportTo||undefined})); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تقرير مطابقة أوامر الشراء."); }
     finally { setBusy(false); }
   };
 
