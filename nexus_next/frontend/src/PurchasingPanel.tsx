@@ -258,7 +258,7 @@ const loadAging = async () => {
       shares[largest] += residual;
     }
     return {
-      valid: shares.every((share) => share > 0n),
+      valid: shares.some((share) => share > 0n),
       total: unitsToDecimal(shares.reduce((sum, share) => sum + share, 0n)),
       rows: selected.map(({ receipt, item }, index) => ({
         id: item.id,
