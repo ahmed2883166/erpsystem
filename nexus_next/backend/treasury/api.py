@@ -417,6 +417,14 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         ).select_related("customer", "branch").prefetch_related(
             "receipts", "returns",
         )
+        batch_paid_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                invoice__in=sales_invoices,
+                batch__status=CustomerReceiptBatch.Status.POSTED,
+                batch__receipt_date__lte=end_date,
+            ).values("invoice_id").annotate(total=Sum("amount"))
+        }
         for invoice in sales_invoices:
             posted_receipts = [
                 receipt for receipt in invoice.receipts.all()
@@ -435,10 +443,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                         receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount,
                         "سند قبض مرحّل بتاريخ مستقبلي",
                     )
-            batch_paid = CustomerReceiptBatchAllocation.objects.filter(
-                invoice=invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
-                batch__receipt_date__lte=end_date,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            batch_paid = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
             returned = sum((
                 item.grand_total for item in invoice.returns.all()
                 if item.status == SalesReturn.Status.POSTED and item.return_date <= end_date
