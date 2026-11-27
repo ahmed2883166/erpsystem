@@ -418,18 +418,38 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "receipts", "returns",
         )
         for invoice in sales_invoices:
+            posted_receipts = [
+                receipt for receipt in invoice.receipts.all()
+                if receipt.status == CustomerReceipt.Status.POSTED
+                and receipt.receipt_date <= end_date
+            ]
             paid = sum((
                 receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount
-                for receipt in invoice.receipts.all()
-                if receipt.status == CustomerReceipt.Status.POSTED and receipt.receipt_date <= today
+                for receipt in posted_receipts
             ), Decimal("0"))
-            batch_paid = CustomerReceiptBatchAllocation.objects.filter(
-                invoice=invoice, allocation_date__lte=today,
-                batch__status="posted", batch__receipt_date__lte=today,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            for receipt in posted_receipts:
+                if receipt.receipt_date > today:
+                    add_item(
+                        "collections", receipt.receipt_number, invoice.customer.name_ar,
+                        receipt.receipt_date,
+                        receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount,
+                        "سند قبض مرحّل بتاريخ مستقبلي",
+                    )
+            batch_allocations = CustomerReceiptBatchAllocation.objects.filter(
+                invoice=invoice, allocation_date__lte=end_date,
+                batch__status="posted", batch__receipt_date__lte=end_date,
+            ).select_related("batch")
+            batch_paid = sum((allocation.amount for allocation in batch_allocations), Decimal("0"))
+            for allocation in batch_allocations:
+                if allocation.batch.receipt_date > today:
+                    add_item(
+                        "collections", allocation.batch.receipt_number,
+                        invoice.customer.name_ar, allocation.batch.receipt_date,
+                        allocation.amount, "سند قبض مجمع مرحّل بتاريخ مستقبلي",
+                    )
             returned = sum((
                 item.grand_total for item in invoice.returns.all()
-                if item.status == SalesReturn.Status.POSTED and item.return_date <= today
+                if item.status == SalesReturn.Status.POSTED and item.return_date <= end_date
             ), Decimal("0"))
             balance = max(invoice.grand_total - paid - batch_paid - returned, Decimal("0"))
             due_date = invoice.invoice_date + timedelta(days=invoice.customer.payment_terms_days)
@@ -450,11 +470,19 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             paid = sum((
                 payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount
                 for payment in invoice.payments.all()
-                if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= today
+                if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= end_date
             ), Decimal("0"))
+            for payment in invoice.payments.all():
+                if payment.status == SupplierPayment.Status.POSTED and today < payment.payment_date <= end_date:
+                    add_item(
+                        "supplier_payments", payment.payment_number, invoice.supplier.name_ar,
+                        payment.payment_date,
+                        payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount,
+                        "سند صرف مورد مرحّل بتاريخ مستقبلي",
+                    )
             returned = sum((
                 item.grand_total for item in invoice.returns.all()
-                if item.status == SupplierReturn.Status.POSTED and item.return_date <= today
+                if item.status == SupplierReturn.Status.POSTED and item.return_date <= end_date
             ), Decimal("0"))
             balance = max(invoice.grand_total - paid - returned, Decimal("0"))
             due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
@@ -472,8 +500,15 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         for invoice in asset_invoices:
             paid = sum((
                 payment.amount for payment in invoice.payments.all()
-                if payment.status == AssetSupplierPayment.Status.POSTED and payment.payment_date <= today
+                if payment.status == AssetSupplierPayment.Status.POSTED and payment.payment_date <= end_date
             ), Decimal("0"))
+            for payment in invoice.payments.all():
+                if payment.status == AssetSupplierPayment.Status.POSTED and today < payment.payment_date <= end_date:
+                    add_item(
+                        "supplier_payments", payment.payment_number, invoice.supplier.name_ar,
+                        payment.payment_date, payment.amount,
+                        "سند سداد أصل ثابت مرحّل بتاريخ مستقبلي",
+                    )
             balance = max(invoice.grand_total - paid, Decimal("0"))
             due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
             add_item(
@@ -502,12 +537,20 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             for result in results:
                 posting = postings.get(result["employee__branch_id"])
                 payment_doc = posting.payment_treasury_transaction if posting else None
-                if payment_doc and payment_doc.status == TreasuryTransaction.Status.POSTED:
-                    continue
                 branch = Branch.objects.filter(pk=result["employee__branch_id"]).only("name_ar").first()
+                branch_name = branch.name_ar if branch else "مرتبات الفرع"
+                payroll_amount = result["total"] or Decimal("0")
+                if payment_doc and payment_doc.status == TreasuryTransaction.Status.POSTED:
+                    if payment_doc.transaction_date > today:
+                        add_item(
+                            "payroll", payment_doc.document_number, branch_name,
+                            payment_doc.transaction_date, payroll_amount,
+                            "سند صرف مرتبات مرحّل بتاريخ مستقبلي",
+                        )
+                    continue
                 add_item(
-                    "payroll", f"PAY-{cycle.pk}", branch.name_ar if branch else "مرتبات الفرع",
-                    cycle.payment_date, result["total"] or Decimal("0"),
+                    "payroll", f"PAY-{cycle.pk}", branch_name,
+                    cycle.payment_date, payroll_amount,
                     "استحقاق مرتبات غير مصروف",
                 )
             if cycle.results.filter(employee__branch_id__in=branch_ids).exclude(
