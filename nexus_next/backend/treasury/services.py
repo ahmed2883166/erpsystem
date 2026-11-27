@@ -624,8 +624,6 @@ def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
             .select_related("company__base_currency", "account")
             .filter(pk__in=sorted(account_ids)).order_by("pk")
         }
-        source = locked_accounts[doc.source_account_id]
-        destination = locked_accounts.get(doc.destination_account_id)
         blocker = _foreign_treasury_transaction_reversal_blocker(
             doc, [locked_accounts[key] for key in sorted(account_ids)],
         )
