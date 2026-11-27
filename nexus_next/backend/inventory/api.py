@@ -140,7 +140,7 @@ class ProductViewSet(CompanyScopedViewSet):
 
 class WarehouseViewSet(CompanyScopedViewSet):
     serializer_class = WarehouseSerializer
-    queryset = Warehouse.objects.select_related("company", "branch")
+    queryset = Warehouse.objects.select_related("company", "branch").filter(is_transit=False)
     filterset_fields = ("company", "branch", "is_active")
     search_fields = ("code", "name_ar")
     ordering_fields = ("code", "name_ar", "created_at")
