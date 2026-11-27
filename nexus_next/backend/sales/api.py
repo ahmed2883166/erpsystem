@@ -1065,7 +1065,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         else:
             sales_totals = invoices.aggregate(
                 net=Sum("net_total"), discount=Sum("discount_total"),
-                tax=Sum("tax_amount"), total=Sum("grand_total"),
+                tax=Sum("tax_total"), total=Sum("grand_total"),
             )
             invoice_count = invoices.count()
             return_count = returns.count()
