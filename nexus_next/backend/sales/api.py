@@ -1,12 +1,16 @@
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
 from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -17,7 +21,7 @@ from accounting.models import FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from companies.models import Branch, CompanyMembership
+from companies.models import Branch, Company, CompanyMembership
 from inventory.models import StockMovement
 from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
@@ -252,12 +256,17 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         movement.delete()
 
     @action(detail=True, methods=("post",))
+    @transaction.atomic
     def post(self, request, pk=None):
-        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
+        """ترحيل إذن التسليم مع تثبيت قالب الطباعة وقت الإصدار."""
         delivery = self.get_object()
         self._check_write(delivery.company_id)
         if not _sales_warehouse_accessible(request.user, delivery.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
+        delivery.print_template_snapshot = _document_template_snapshot(
+            delivery.company, SalesDocumentTemplate.DocumentType.DELIVERY,
+        )
+        delivery.save(update_fields=("print_template_snapshot",))
         delivery = post_sales_delivery(delivery.pk, request.user)
         return Response(self.get_serializer(delivery).data, status=status.HTTP_200_OK)
 
@@ -1200,6 +1209,103 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         })
 
 
+    @action(detail=False, methods=("get",), url_path="sales-performance-export")
+    def sales_performance_export(self, request):
+        """تنزيل تقرير أداء المبيعات كملف Excel متعدد الأوراق بنفس فلاتر التقرير وصلاحياته."""
+        report = self.sales_performance(request).data
+        company = Company.objects.select_related("base_currency").get(pk=report["company"])
+        currency_code = company.base_currency.code
+
+        workbook = Workbook()
+        summary = workbook.active
+        summary.title = "ملخص"
+        summary.sheet_view.rightToLeft = True
+        summary.append(["تقرير أداء المبيعات"])
+        summary.append(["الشركة", company.name_ar])
+        summary.append(["العملة الأساسية", currency_code])
+        summary.append(["من تاريخ", report["date_from"], "إلى تاريخ", report["date_to"]])
+        summary.append(["الفرع", report["branch"] or "كل الفروع"])
+        summary.append(["العميل", report["customer_filter"] or "كل العملاء"])
+        summary.append(["الصنف", report["product_filter"] or "كل الأصناف"])
+        summary.append([])
+        summary.append(["المؤشر", "القيمة"])
+        total_labels = (
+            ("عدد الفواتير", "invoice_count"), ("عدد المرتجعات", "return_count"),
+            ("صافي المبيعات قبل المرتجعات", "sales_net"), ("إجمالي الخصومات", "discount_total"),
+            ("ضريبة المبيعات", "sales_tax"), ("إجمالي المبيعات", "sales_total"),
+            ("صافي المرتجعات", "return_net"), ("ضريبة المرتجعات", "return_tax"),
+            ("إجمالي المرتجعات", "return_total"), ("صافي المبيعات بعد المرتجعات", "net_sales"),
+            ("تكلفة المبيعات الصافية", "net_cost"), ("مجمل الربح", "gross_profit"),
+        )
+        for label, key in total_labels:
+            value = report["totals"][key]
+            summary.append([label, int(value) if key.endswith("_count") else Decimal(str(value))])
+        customers = workbook.create_sheet("حسب العميل")
+        customers.sheet_view.rightToLeft = True
+        customer_headers = ["العميل", "عدد الفواتير", "الكمية المباعة", "الكمية المرتجعة",
+                            "المبيعات قبل المرتجعات", "المرتجعات", "ضريبة المبيعات",
+                            "ضريبة المرتجعات", "صافي المبيعات", "تكلفة المبيعات", "مجمل الربح"]
+        customers.append(customer_headers)
+        for row in report["by_customer"]:
+            customers.append([
+                row["customer_name"], row["invoice_count"], Decimal(row["quantity_sold"]),
+                Decimal(row["quantity_returned"]), Decimal(row["sales_net"]), Decimal(row["return_net"]),
+                Decimal(row["sales_tax"]), Decimal(row["return_tax"]), Decimal(row["net_sales"]),
+                Decimal(row["net_cost"]), Decimal(row["gross_profit"]),
+            ])
+        products = workbook.create_sheet("حسب الصنف")
+        products.sheet_view.rightToLeft = True
+        product_headers = ["كود الصنف", "الصنف", "عدد الفواتير", "الكمية المباعة", "الكمية المرتجعة",
+                           "المبيعات قبل المرتجعات", "المرتجعات", "ضريبة المبيعات",
+                           "ضريبة المرتجعات", "صافي المبيعات", "تكلفة المبيعات", "مجمل الربح"]
+        products.append(product_headers)
+        for row in report["by_product"]:
+            products.append([
+                row["product_code"], row["product_name"], row["invoice_count"],
+                Decimal(row["quantity_sold"]), Decimal(row["quantity_returned"]),
+                Decimal(row["sales_net"]), Decimal(row["return_net"]), Decimal(row["sales_tax"]),
+                Decimal(row["return_tax"]), Decimal(row["net_sales"]), Decimal(row["net_cost"]),
+                Decimal(row["gross_profit"]),
+            ])
+
+        for sheet in workbook.worksheets:
+            sheet.freeze_panes = "A2" if sheet is not summary else "A9"
+            sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.page_setup.fitToWidth = 1
+            sheet.page_setup.fitToHeight = 0
+            for cell in sheet[1]:
+                cell.font = Font(bold=True, color="FFFFFF", size=14)
+                cell.fill = PatternFill("solid", fgColor="1F4E79")
+            for cell in sheet[1 if sheet is not summary else 9]:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            if sheet is not summary:
+                sheet.auto_filter.ref = sheet.dimensions
+                for cell in sheet[1]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill("solid", fgColor="1F4E79")
+            for column in sheet.columns:
+                letter = column[0].column_letter
+                width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 34)
+                sheet.column_dimensions[letter].width = width
+            for row in sheet.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    if isinstance(cell.value, Decimal):
+                        cell.number_format = '#,##0.00;[Red]-#,##0.00'
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="sales-performance-{report["date_from"]}-{report["date_to"]}.xlsx"'
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
 class CustomerReceiptViewSet(SalesBaseViewSet):
     serializer_class = CustomerReceiptSerializer
     queryset = CustomerReceipt.objects.select_related("company", "customer", "invoice", "transaction_currency", "journal_entry", "journal_entry__reversal_entry")
@@ -1275,8 +1381,9 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         receipt.delete()
 
     @action(detail=True, methods=("post",))
+    @transaction.atomic
     def post(self, request, pk=None):
-        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
+        """ترحيل سند القبض مع تثبيت قالب الطباعة وقت الإصدار."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
         invoice = receipt.invoice
@@ -1286,6 +1393,10 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
         if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
+        receipt.print_template_snapshot = _document_template_snapshot(
+            receipt.company, SalesDocumentTemplate.DocumentType.RECEIPT,
+        )
+        receipt.save(update_fields=("print_template_snapshot",))
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
 
