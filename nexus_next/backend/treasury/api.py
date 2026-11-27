@@ -624,6 +624,10 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError("لا يمكن إنشاء تسوية محاسبية من كشف معتمد.")
         if recon.bank_account.currency_code != recon.company.base_currency.code:
             raise ValidationError("إنشاء سند التسوية المباشر متاح حاليًا للحسابات بالعملة الأساسية فقط؛ لا تُنشئ قيدًا أجنبيًا دون سعر صرف معتمد.")
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(
+            request.user, recon.company_id
+        ):
+            raise PermissionDenied("إنشاء سند من كشف حساب بنكي عام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         if recon.bank_account.branch_id:
             branch_id = recon.bank_account.branch_id
         else:
