@@ -30,6 +30,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [pettyHandoverCustodian,setPettyHandoverCustodian]=useState("");
   const [pettyHandoverActual,setPettyHandoverActual]=useState("");
   const [pettyHandoverNotes,setPettyHandoverNotes]=useState("");
+  const [pettyCloseActual,setPettyCloseActual]=useState("");
   const [commitmentSchedules,setCommitmentSchedules]=useState<CashCommitmentSchedule[]>([]);
   const [commitmentForm,setCommitmentForm]=useState({branch:"",commitment_type:"tax" as CashCommitment["commitment_type"],title:"",period_label:"",amount:"",currency_code:"",exchange_rate:"1",due_date:today(),payable_account:"",notes:""});
   const [scheduleForm,setScheduleForm]=useState({branch:"",title:"",amount:"",currency_code:"",exchange_rate:"1",frequency:"monthly" as CashCommitmentSchedule["frequency"],next_due_date:today(),end_date:"",payable_account:"",notes:""});
@@ -211,7 +212,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <button type="button" disabled={busy} onClick={async()=>{setBusy(true);setError("");try{await treasuryApi.createPettyCashFund({company:companyId,branch:Number(pettyFundForm.branch),code:pettyFundForm.code,name:pettyFundForm.name,custodian:Number(pettyFundForm.custodian),funding_account:Number(pettyFundForm.funding_account),petty_cash_account:Number(pettyFundForm.petty_cash_account),authorized_amount:pettyFundForm.authorized_amount});setPettyFundForm(v=>({...v,code:"",name:"",custodian:"",authorized_amount:""}));await load();}catch(e){setError((e as Error).message||"تعذر إنشاء العهدة.");}finally{setBusy(false);}}}>حفظ العهدة</button>
       </div>
       <div className="data-table-wrap"><h3>العهد المسجلة</h3><table><thead><tr><th>الكود</th><th>العهدة</th><th>أمين العهدة</th><th>حساب الصندوق</th><th>الحد المعتمد</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
-        {pettyCashFunds.map(f=><tr key={f.id}><td>{f.code}</td><td>{f.name}</td><td>{f.custodian_name||f.custodian}</td><td>{f.petty_cash_account_name}</td><td>{money(f.authorized_amount)} {baseCurrencyCode}</td><td>{f.status==="active"?"نشطة":f.status==="suspended"?"موقوفة":"مغلقة"}</td><td>{f.status==="active"&&<button type="button" disabled={busy} onClick={async()=>{setBusy(true);setError("");try{await treasuryApi.closePettyCash(f.id);await load();}catch(e){setError((e as Error).message||"تعذر إغلاق العهدة.");}finally{setBusy(false);}}}>إغلاق</button>}</td></tr>)}
+        {pettyCashFunds.map(f=><tr key={f.id}><td>{f.code}</td><td>{f.name}</td><td>{f.custodian_name||f.custodian}</td><td>{f.petty_cash_account_name}</td><td>{money(f.authorized_amount)} {baseCurrencyCode}</td><td>{f.status==="active"?"نشطة":f.status==="suspended"?"موقوفة":"مغلقة"}</td><td>{f.status==="active"&&<button type="button" disabled={busy||pettyCloseActual===""} onClick={async()=>{setBusy(true);setError("");try{await treasuryApi.closePettyCash(f.id,pettyCloseActual);setPettyCloseActual("");await load();}catch(e){setError((e as Error).message||"تعذر إغلاق العهدة.");}finally{setBusy(false);}}}>إغلاق</button>}</td></tr>)}
         {!pettyCashFunds.length&&<tr><td colSpan={7}>لا توجد عهد مسجلة.</td></tr>}
       </tbody></table></div>
       <div className="treasury-form">
@@ -229,6 +230,8 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
       <div className="treasury-form">
         <h3 className="form-wide">إجراءات العهدة</h3>
         <label>العهدة<select value={pettyExpenseForm.fund} onChange={e=>setPettyExpenseForm(v=>({...v,fund:e.target.value}))}>{pettyCashFunds.map(f=><option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}</select></label>
+        <label>النقدية الفعلية عند الإغلاق<input type="number" min="0" step="0.01" value={pettyCloseActual} onChange={e=>setPettyCloseActual(e.target.value)}/></label>
+        <p className="form-wide">عند الإغلاق، يطابق النظام النقدية الفعلية مع الرصيد الدفتري ويرد المتبقي إلى حساب تمويل العهدة بقيد تحويل.</p>
         <label>مبلغ الصرف / التغذية<input type="number" min="0.01" step="0.01" value={pettyActionAmount} onChange={e=>setPettyActionAmount(e.target.value)}/></label>
         <button type="button" disabled={busy||!pettyExpenseForm.fund||!pettyActionAmount} onClick={async()=>{setBusy(true);setError("");try{await treasuryApi.fundPettyCash(Number(pettyExpenseForm.fund),pettyActionAmount,today());setPettyActionAmount("");await load();}catch(e){setError((e as Error).message||"تعذر صرف العهدة.");}finally{setBusy(false);}}}>صرف العهدة التأسيسية</button>
         <button type="button" disabled={busy||!pettyExpenseForm.fund||!pettyActionAmount} onClick={async()=>{setBusy(true);setError("");try{await treasuryApi.replenishPettyCash(Number(pettyExpenseForm.fund),pettyActionAmount,today());setPettyActionAmount("");await load();}catch(e){setError((e as Error).message||"تعذر تغذية العهدة.");}finally{setBusy(false);}}}>تغذية بعد التسوية</button>
