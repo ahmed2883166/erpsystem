@@ -74,7 +74,12 @@ export default function TreasuryPanel({companyId}: Props) {
   const refreshSummary=useCallback(async(id:string)=>{if(!id){setSummary(null);return;}try{setSummary(await bankReconciliationApi.summary(Number(id)));}catch(e){setError((e as Error).message||"تعذر تحميل التسوية.");}},[]);
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
-const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+const saveCommitment=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitment({...commitmentForm,company:companyId,branch:commitmentForm.branch?Number(commitmentForm.branch):null,payable_account:Number(commitmentForm.payable_account)});setCommitmentForm(old=>({...old,title:"",period_label:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الالتزام.");}finally{setBusy(false);}};
+  const saveCommitmentSchedule=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitmentSchedule({...scheduleForm,company:companyId,branch:scheduleForm.branch?Number(scheduleForm.branch):null,payable_account:Number(scheduleForm.payable_account),end_date:scheduleForm.end_date||null});setScheduleForm(old=>({...old,title:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الجدول الدوري.");}finally{setBusy(false);}};
+  const generateSchedule=async(id:number)=>{setBusy(true);setError("");try{const result=await treasuryApi.generateCommitmentSchedule(id,scheduleThrough);setError("تم إنشاء "+result.generated+" استحقاق دوري.");await load();}catch(err){setError((err as Error).message||"تعذر توليد الاستحقاقات.");}finally{setBusy(false);}};
+  const saveCommitmentPayment=async(id:number)=>{const form=paymentForms[id];if(!form)return;setBusy(true);setError("");try{await treasuryApi.recordCommitmentPayment(id,{amount:form.amount,payment_date:form.payment_date,journal_entry:Number(form.journal_entry)});await load();}catch(err){setError((err as Error).message||"تعذر ربط دفعة الالتزام بالقيد.");}finally{setBusy(false);}};
+  const voidCommitment=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.voidCommitment(id);await load();}catch(err){setError((err as Error).message||"تعذر إلغاء الالتزام.");}finally{setBusy(false);}};
+  const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     const foreign=!!acc.currency_code&&acc.currency_code!==baseCurrencyCode;
     let openingBase=acc.opening_balance;
     if(foreign&&Number(acc.opening_foreign_amount)>0){
