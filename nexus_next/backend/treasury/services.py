@@ -598,14 +598,12 @@ def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
     from assets.models import FixedAsset
     if FixedAsset.objects.filter(Q(acquisition_treasury_transaction_id=doc.pk) | Q(disposal_treasury_transaction_id=doc.pk)).exists():
         raise ValidationError("حركة اقتناء أو استبعاد أصل ثابت؛ عالجها من دورة الأصول.")
-    from .models import BankStatementLine, BankStatementMatchAllocation, TreasuryCheque
+    from .models import BankStatementLine, BankStatementMatchAllocation
     if (
         BankStatementLine.objects.filter(matched_transaction_id=doc.pk).exists()
         or BankStatementMatchAllocation.objects.filter(transaction_id=doc.pk).exists()
     ):
         raise ValidationError("الحركة مرتبطة بتسوية بنكية؛ فك المطابقة أو عالج التسوية أولًا قبل العكس.")
-    if TreasuryCheque.objects.filter(treasury_transaction_id=doc.pk).exists():
-        raise ValidationError("الحركة مرتبطة بشيك؛ عالج حالة الشيك أولًا قبل عكس سند الخزينة.")
     if entry_date < doc.transaction_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ مستند الخزينة الأصلي.")
 
