@@ -27,8 +27,18 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="pettycashexpense",
-            name="receipt_file",
-            field=models.FileField(blank=True, null=True, upload_to="petty_cash_receipts/%Y/%m/"),
+            name="receipt_file_data",
+            field=models.BinaryField(blank=True, editable=False, null=True),
+        ),
+        migrations.AddField(
+            model_name="pettycashexpense",
+            name="receipt_file_name",
+            field=models.CharField(blank=True, max_length=255),
+        ),
+        migrations.AddField(
+            model_name="pettycashexpense",
+            name="receipt_file_content_type",
+            field=models.CharField(blank=True, max_length=100),
         ),
         migrations.AddField(
             model_name="pettycashexpense",
