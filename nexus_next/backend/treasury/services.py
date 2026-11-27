@@ -586,8 +586,8 @@ def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
         raise ValidationError("عملة حساب التحويل لا تطابق عملة الحساب المصدر؛ لا يمكن عكس الحركة بأمان.")
     if foreign and (
         not doc.transaction_currency_id or doc.transaction_currency.code != doc.source_account.currency_code
-        or not doc.transaction_amount or not doc.carrying_amount
-        or doc.transaction_amount <= 0 or doc.carrying_amount <= 0
+        or not doc.transaction_amount or not doc.exchange_rate or not doc.carrying_amount
+        or doc.transaction_amount <= 0 or doc.exchange_rate <= 0 or doc.carrying_amount <= 0
         or doc.amount != _money(doc.transaction_amount * doc.exchange_rate)
     ):
         raise ValidationError("بيانات المبلغ الأجنبي أو القيمة الدفترية الأصلية غير مكتملة؛ راجع المستند قبل العكس.")
