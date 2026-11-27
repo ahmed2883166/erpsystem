@@ -145,6 +145,21 @@ export type SupplierQuotation = {
   total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
 };
 
+
+export type PurchaseMatchingReport = {
+  company:number; date_from:string|null; date_to:string|null; branch:number|null; supplier:number|null; product:number|null;
+  totals:{line_count:number;unreceived_line_count:number;uninvoiced_line_count:number;overinvoiced_line_count:number;order_value:string;invoiced_net_amount:string;price_variance:string};
+  rows:{
+    order_id:number;order_number:string;order_date:string;order_status:string;
+    supplier_id:number;supplier_name:string;warehouse_id:number;warehouse_name:string;branch_id:number|null;branch_name:string;
+    order_line_id:number;product_id:number;product_code:string;product_name:string;
+    ordered_quantity:string;received_quantity:string;recorded_received_quantity:string;receipt_link_discrepancy:string;
+    invoiced_quantity:string;returned_quantity:string;uninvoiced_received_quantity:string;unreceived_quantity:string;overinvoiced_quantity:string;
+    order_unit_price:string;expected_order_value:string;invoiced_net_amount:string;price_variance:string;
+    receipt_numbers:string[];invoice_numbers:string[];
+  }[];
+};
+
 export type LandedCostDocument = {
   id:number; company:number; source_invoice:number; source_invoice_number:string; supplier_name:string;
   document_number:string; document_date:string; status:"draft"|"posted"|"reversed"; total_amount:string;
@@ -255,6 +270,11 @@ export const purchasingApi = {
   createLandedCost: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>("/api/purchasing/landed-costs/", {method:"POST",body:JSON.stringify(payload)}); },
   postLandedCost: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/post/`, {method:"POST"}); },
   reverseLandedCost: async (id:number,entryDate:string) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/reverse/`, {method:"POST",body:JSON.stringify({entry_date:entryDate})}); },
+  purchaseMatchingReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number}={}) => {
+    const params=new URLSearchParams({company:String(companyId)});
+    Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
+    return request<PurchaseMatchingReport>(`/api/purchasing/orders/matching-report/?${params.toString()}`);
+  },
   landedCostReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number}={}) => {
     const params=new URLSearchParams({company:String(companyId)});
     Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
