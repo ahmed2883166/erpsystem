@@ -3852,3 +3852,11 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(row["invoice_numbers"], ["INV-MATCH-001"])
         self.assertEqual(report.data["totals"]["order_value"], "1000.0000")
         self.assertEqual(report.data["totals"]["invoiced_net_amount"], "200.0000")
+        excel = self.client.get(
+            f"/api/purchasing/orders/matching-report-export-excel/?company={self.company.pk}",
+        )
+        self.assertEqual(excel.status_code, 200)
+        self.assertEqual(
+            excel["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
