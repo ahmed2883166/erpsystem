@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
 from accounting.models import ChartOfAccount
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, PettyCashFund, PettyCashExpense, PettyCashCount
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, PettyCashFund, PettyCashExpense, PettyCashCount, PettyCashCustodianHandover
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
@@ -526,9 +526,32 @@ class PettyCashExpenseSerializer(serializers.ModelSerializer):
         model = PettyCashExpense
         fields = ("id", "fund", "fund_name", "expense_date", "description", "amount",
                   "expense_account", "expense_account_code", "expense_account_name",
-                  "receipt_number", "vendor_name", "status", "settlement",
-                  "settlement_journal_number", "created_at", "updated_at")
-        read_only_fields = ("status", "settlement", "created_at", "updated_at")
+                  "receipt_number", "receipt_file", "vendor_name", "status", "settlement",
+                  "settlement_journal_number", "submitted_at", "approved_by", "approved_at",
+                  "approval_note", "rejected_by", "rejected_at", "rejection_note",
+                  "created_at", "updated_at")
+        read_only_fields = ("status", "settlement", "submitted_at", "approved_by", "approved_at",
+                            "approval_note", "rejected_by", "rejected_at", "rejection_note",
+                            "created_at", "updated_at")
+
+    def validate_receipt_file(self, value):
+        if value is None:
+            return value
+        if value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError("حجم مرفق الإيصال يجب ألا يتجاوز 10 ميجابايت.")
+        import os
+        extension = os.path.splitext((value.name or "").lower())[1]
+        allowed = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+        if extension not in allowed or value.content_type not in (allowed[extension], "application/octet-stream"):
+            raise serializers.ValidationError("المرفق يجب أن يكون PDF أو صورة JPG/PNG.")
+        header = value.read(8)
+        value.seek(0)
+        valid = ((extension == ".pdf" and header.startswith(b"%PDF-"))
+                 or (extension in (".jpg", ".jpeg") and header.startswith(b"\xff\xd8\xff"))
+                 or (extension == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n")))
+        if not valid:
+            raise serializers.ValidationError("محتوى الملف لا يطابق نوع المرفق المسموح.")
+        return value
 
     def validate(self, attrs):
         fund = attrs.get("fund", getattr(self.instance, "fund", None))
@@ -550,8 +573,25 @@ class PettyCashCountSerializer(serializers.ModelSerializer):
     class Meta:
         model = PettyCashCount
         fields = ("id", "fund", "count_date", "expected_balance", "actual_balance",
-                  "variance", "notes", "counted_by", "counted_by_name", "created_at")
-        read_only_fields = ("expected_balance", "counted_by", "created_at")
+                  "variance", "notes", "status", "counted_by", "counted_by_name",
+                  "reviewed_by", "reviewed_at", "review_note", "adjustment_journal_entry",
+                  "created_at")
+        read_only_fields = ("expected_balance", "status", "counted_by", "reviewed_by",
+                            "reviewed_at", "review_note", "adjustment_journal_entry", "created_at")
 
     def get_variance(self, obj):
         return obj.variance
+
+
+class PettyCashCustodianHandoverSerializer(serializers.ModelSerializer):
+    previous_custodian_name = serializers.CharField(source="previous_custodian.get_full_name", read_only=True)
+    new_custodian_name = serializers.CharField(source="new_custodian.get_full_name", read_only=True)
+    handed_over_by_name = serializers.CharField(source="handed_over_by.get_full_name", read_only=True)
+
+    class Meta:
+        model = PettyCashCustodianHandover
+        fields = ("id", "fund", "previous_custodian", "previous_custodian_name",
+                  "new_custodian", "new_custodian_name", "handover_date",
+                  "expected_balance", "actual_balance", "notes", "handed_over_by",
+                  "handed_over_by_name", "created_at")
+        read_only_fields = fields
