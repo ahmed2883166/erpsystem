@@ -12,7 +12,7 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
@@ -250,6 +250,8 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
         if not as_of:
             raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if as_of != timezone.localdate():
+            raise ValidationError({"as_of": "مركز السيولة الحالي يعرض تاريخ اليوم فقط؛ لا يعرض أرصدة تاريخية للعملات الأجنبية."})
 
         branch_id = request.query_params.get("branch")
         if branch_id:
@@ -330,7 +332,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "scope": "branch" if branch_id else "accessible_branches",
             "total_base_balance": str(total_base),
             "accounts": rows,
-            "note": "الأرصدة محسوبة من القيود المرحلة فقط، مع استبعاد قيود الإقفال. التحويلات الداخلية لا تغيّر إجمالي الشركة، والعملات الأجنبية معروضة اسميًا وبقيمتها الدفترية الأساسية.",
+            "note": "الأرصدة محسوبة حتى اليوم من القيود المرحلة فقط، مع استبعاد قيود الإقفال. التحويلات الداخلية لا تغيّر إجمالي الشركة، والعملات الأجنبية معروضة اسميًا وبقيمتها الدفترية الأساسية.",
         })
 
     @decorators.action(detail=True, methods=("post",), url_path="revalue")
