@@ -155,7 +155,7 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(position.carrying_base_amount, Decimal("150000.0000"))
 
     def test_foreign_treasury_opening_balance_rejects_unapproved_rate(self):
-        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         opening_gl = ChartOfAccount.objects.create(
             company=self.company, code="1121", name_ar="بنك دولار غير معتمد",
             nature=ChartOfAccount.Nature.ASSET,
