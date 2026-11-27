@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule, type PettyCashFund, type PettyCashExpense, type PettyCashCount, type PettyCashCustodianHandover, type DirectCashFlowReport, type IndirectCashFlowReport } from "./api";
+import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule, type PettyCashFund, type PettyCashExpense, type PettyCashCount, type PettyCashCustodianHandover, type PettyCashStatement, type PettyCashExpenseReport, type DirectCashFlowReport, type IndirectCashFlowReport } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -31,6 +31,13 @@ export default function TreasuryPanel({companyId}: Props) {
   const [pettyHandoverActual,setPettyHandoverActual]=useState("");
   const [pettyHandoverNotes,setPettyHandoverNotes]=useState("");
   const [pettyCloseActual,setPettyCloseActual]=useState("");
+  const [pettyEditingExpenseId,setPettyEditingExpenseId]=useState<number|null>(null);
+  const [pettyReportDateFrom,setPettyReportDateFrom]=useState(()=>`${new Date().getFullYear()}-01-01`);
+  const [pettyReportDateTo,setPettyReportDateTo]=useState(today());
+  const [pettyReportBranch,setPettyReportBranch]=useState("");
+  const [pettyStatement,setPettyStatement]=useState<PettyCashStatement|null>(null);
+  const [pettyExpenseReport,setPettyExpenseReport]=useState<PettyCashExpenseReport|null>(null);
+  const [pettyReportLoading,setPettyReportLoading]=useState(false);
   const [commitmentSchedules,setCommitmentSchedules]=useState<CashCommitmentSchedule[]>([]);
   const [commitmentForm,setCommitmentForm]=useState({branch:"",commitment_type:"tax" as CashCommitment["commitment_type"],title:"",period_label:"",amount:"",currency_code:"",exchange_rate:"1",due_date:today(),payable_account:"",notes:""});
   const [scheduleForm,setScheduleForm]=useState({branch:"",title:"",amount:"",currency_code:"",exchange_rate:"1",frequency:"monthly" as CashCommitmentSchedule["frequency"],next_due_date:today(),end_date:"",payable_account:"",notes:""});
@@ -114,6 +121,19 @@ export default function TreasuryPanel({companyId}: Props) {
     finally{setCashFlowLoading(false);}
   },[companyId,cashFlowDateFrom,cashFlowDateTo,cashFlowBranch,cashFlowMethod]);
   useEffect(()=>{if(tab==="cashflow")void loadCashFlow();},[tab,loadCashFlow]);
+  const loadPettyCashReports=useCallback(async()=>{
+    if(!pettyExpenseForm.fund){setError("اختر العهدة لعرض كشف حركتها.");return;}
+    if(!pettyReportDateFrom||!pettyReportDateTo||pettyReportDateFrom>pettyReportDateTo){setError("حدد فترة صحيحة لتقارير العهدة.");return;}
+    setPettyReportLoading(true);setError("");
+    try{
+      const [statement,report]=await Promise.all([
+        treasuryApi.pettyCashStatement(Number(pettyExpenseForm.fund),pettyReportDateFrom,pettyReportDateTo),
+        treasuryApi.pettyCashExpenseReport(companyId,pettyReportDateFrom,pettyReportDateTo,pettyReportBranch?Number(pettyReportBranch):undefined),
+      ]);
+      setPettyStatement(statement);setPettyExpenseReport(report);
+    }catch(e){setError((e as Error).message||"تعذر تحميل تقارير العهدة.");}
+    finally{setPettyReportLoading(false);}
+  },[companyId,pettyExpenseForm.fund,pettyReportDateFrom,pettyReportDateTo,pettyReportBranch]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
 const saveCommitment=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitment({...commitmentForm,company:companyId,branch:commitmentForm.branch?Number(commitmentForm.branch):null,payable_account:Number(commitmentForm.payable_account)});setCommitmentForm(old=>({...old,title:"",period_label:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الالتزام.");}finally{setBusy(false);}};
   const saveCommitmentSchedule=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitmentSchedule({...scheduleForm,company:companyId,branch:scheduleForm.branch?Number(scheduleForm.branch):null,payable_account:Number(scheduleForm.payable_account),end_date:scheduleForm.end_date||null});setScheduleForm(old=>({...old,title:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الجدول الدوري.");}finally{setBusy(false);}};
@@ -216,7 +236,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         {!pettyCashFunds.length&&<tr><td colSpan={7}>لا توجد عهد مسجلة.</td></tr>}
       </tbody></table></div>
       <div className="treasury-form">
-        <h3 className="form-wide">تسجيل مصروف عهدة</h3>
+        <h3 className="form-wide">{pettyEditingExpenseId?"تعديل مصروف مرفوض":"تسجيل مصروف عهدة"}</h3>
         <label>العهدة<select value={pettyExpenseForm.fund} onChange={e=>setPettyExpenseForm(v=>({...v,fund:e.target.value}))}>{pettyCashFunds.map(f=><option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}</select></label>
         <label>تاريخ المصروف<input type="date" value={pettyExpenseForm.expense_date} onChange={e=>setPettyExpenseForm(v=>({...v,expense_date:e.target.value}))}/></label>
         <label>البيان<input value={pettyExpenseForm.description} onChange={e=>setPettyExpenseForm(v=>({...v,description:e.target.value}))}/></label>
@@ -225,7 +245,8 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <label>رقم الإيصال<input value={pettyExpenseForm.receipt_number} onChange={e=>setPettyExpenseForm(v=>({...v,receipt_number:e.target.value}))}/></label>
         <label>المورد / الجهة<input value={pettyExpenseForm.vendor_name} onChange={e=>setPettyExpenseForm(v=>({...v,vendor_name:e.target.value}))}/></label>
         <label>صورة / ملف الإيصال<input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={e=>setPettyReceiptFile(e.target.files?.[0]||null)}/></label>
-        <button type="button" disabled={busy||!pettyExpenseForm.fund} onClick={async()=>{setBusy(true);setError("");try{const data=new FormData();data.append("fund",pettyExpenseForm.fund);data.append("expense_date",pettyExpenseForm.expense_date);data.append("description",pettyExpenseForm.description);data.append("amount",pettyExpenseForm.amount);data.append("expense_account",pettyExpenseForm.expense_account);data.append("receipt_number",pettyExpenseForm.receipt_number);data.append("vendor_name",pettyExpenseForm.vendor_name);if(pettyReceiptFile)data.append("receipt_upload",pettyReceiptFile);const created=await treasuryApi.createPettyCashExpense(data);await treasuryApi.submitPettyCashExpense(created.id);setPettyExpenseForm(v=>({...v,description:"",amount:"",receipt_number:"",vendor_name:""}));setPettyReceiptFile(null);await load();}catch(e){setError((e as Error).message||"تعذر حفظ المصروف وإرساله للاعتماد.");}finally{setBusy(false);}}}>حفظ وإرسال للاعتماد</button>
+        <button type="button" disabled={busy||!pettyExpenseForm.fund||!pettyExpenseForm.description||!pettyExpenseForm.amount||!pettyExpenseForm.expense_account} onClick={async()=>{setBusy(true);setError("");try{const data=new FormData();data.append("fund",pettyExpenseForm.fund);data.append("expense_date",pettyExpenseForm.expense_date);data.append("description",pettyExpenseForm.description);data.append("amount",pettyExpenseForm.amount);data.append("expense_account",pettyExpenseForm.expense_account);data.append("receipt_number",pettyExpenseForm.receipt_number);data.append("vendor_name",pettyExpenseForm.vendor_name);if(pettyReceiptFile)data.append("receipt_upload",pettyReceiptFile);const saved=pettyEditingExpenseId?await treasuryApi.updatePettyCashExpense(pettyEditingExpenseId,data):await treasuryApi.createPettyCashExpense(data);await treasuryApi.submitPettyCashExpense(saved.id);setPettyEditingExpenseId(null);setPettyExpenseForm(v=>({...v,description:"",amount:"",receipt_number:"",vendor_name:""}));setPettyReceiptFile(null);await load();}catch(e){setError((e as Error).message||"تعذر حفظ المصروف وإرساله للاعتماد.");}finally{setBusy(false);}}}>{pettyEditingExpenseId?"حفظ التعديل وإعادة الإرسال":"حفظ وإرسال للاعتماد"}</button>
+        {pettyEditingExpenseId&&<button type="button" disabled={busy} onClick={()=>{setPettyEditingExpenseId(null);setPettyExpenseForm(v=>({...v,description:"",amount:"",receipt_number:"",vendor_name:""}));setPettyReceiptFile(null);}}>إلغاء التعديل</button>}
       </div>
       <div className="treasury-form">
         <h3 className="form-wide">إجراءات العهدة</h3>
@@ -240,7 +261,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <button type="button" disabled={busy||!pettyExpenseForm.fund||pettyCountActual===""} onClick={async()=>{setBusy(true);setError("");try{const result=await treasuryApi.countPettyCash(Number(pettyExpenseForm.fund),{count_date:today(),actual_balance:pettyCountActual,notes:pettyCountNotes});setError("تم تسجيل الجرد وإرساله للاعتماد. فرق العهدة: "+result.variance);setPettyCountRows(await treasuryApi.pettyCashCounts(Number(pettyExpenseForm.fund)));setPettyCountActual("");setPettyCountNotes("");}catch(e){setError((e as Error).message||"تعذر تسجيل الجرد.");}finally{setBusy(false);}}}>تسجيل الجرد</button>
       </div>
       <div className="data-table-wrap"><h3>مصروفات العهدة</h3><label>ملاحظة المراجعة / الرفض<input value={pettyReviewNote} onChange={e=>setPettyReviewNote(e.target.value)} placeholder="سبب الرفض أو ملاحظة الاعتماد"/></label><table><thead><tr><th>التاريخ</th><th>العهدة</th><th>البيان</th><th>الحساب</th><th>المبلغ</th><th>الحالة</th><th>الإيصال</th><th>الإجراء</th><th>قيد التسوية</th></tr></thead><tbody>
-        {pettyCashExpenses.map(e=><tr key={e.id}><td>{e.expense_date}</td><td>{e.fund_name}</td><td>{e.description}</td><td>{e.expense_account_code} · {e.expense_account_name}</td><td>{money(e.amount)}</td><td>{e.status==="draft"?"مسودة":e.status==="pending_approval"?"بانتظار الاعتماد":e.status==="approved"?"معتمد":e.status==="rejected"?"مرفوض":e.status==="settled"?"تمت التسوية":"ملغى"}</td><td>{e.receipt_file?<a href={`/api/treasury/petty-cash-expenses/${e.id}/receipt/`}>عرض المرفق</a>:e.receipt_number||"—"}</td><td>{e.status==="pending_approval"?<><button type="button" disabled={busy} onClick={async()=>{setBusy(true);try{await treasuryApi.approvePettyCashExpense(e.id,pettyReviewNote);setPettyReviewNote("");await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>اعتماد</button><button type="button" disabled={busy||pettyReviewNote.trim().length<10} onClick={async()=>{setBusy(true);try{await treasuryApi.rejectPettyCashExpense(e.id,pettyReviewNote);setPettyReviewNote("");await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>رفض</button></>:e.status==="rejected"?<button type="button" disabled={busy} onClick={async()=>{setBusy(true);try{await treasuryApi.submitPettyCashExpense(e.id);await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>إعادة إرسال</button>:"—"}</td><td>{e.settlement_journal_number||"—"}</td></tr>)}
+        {pettyCashExpenses.map(e=><tr key={e.id}><td>{e.expense_date}</td><td>{e.fund_name}</td><td>{e.description}</td><td>{e.expense_account_code} · {e.expense_account_name}</td><td>{money(e.amount)}</td><td>{e.status==="draft"?"مسودة":e.status==="pending_approval"?"بانتظار الاعتماد":e.status==="approved"?"معتمد":e.status==="rejected"?"مرفوض":e.status==="settled"?"تمت التسوية":"ملغى"}</td><td>{e.receipt_file?<a href={`/api/treasury/petty-cash-expenses/${e.id}/receipt/`}>عرض المرفق</a>:e.receipt_number||"—"}</td><td>{e.status==="pending_approval"?<><button type="button" disabled={busy} onClick={async()=>{setBusy(true);try{await treasuryApi.approvePettyCashExpense(e.id,pettyReviewNote);setPettyReviewNote("");await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>اعتماد</button><button type="button" disabled={busy||pettyReviewNote.trim().length<10} onClick={async()=>{setBusy(true);try{await treasuryApi.rejectPettyCashExpense(e.id,pettyReviewNote);setPettyReviewNote("");await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>رفض</button></>:e.status==="rejected"?<><button type="button" disabled={busy||pettyEditingExpenseId!==null} onClick={()=>{setPettyEditingExpenseId(e.id);setPettyExpenseForm({fund:String(e.fund),expense_date:e.expense_date,description:e.description,amount:e.amount,expense_account:String(e.expense_account),receipt_number:e.receipt_number,vendor_name:e.vendor_name});setPettyReceiptFile(null);}}>تعديل</button><button type="button" disabled={busy} onClick={async()=>{setBusy(true);try{await treasuryApi.submitPettyCashExpense(e.id);await load();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}>إعادة إرسال</button></>:"—"}</td><td>{e.settlement_journal_number||"—"}</td></tr>)}
         {!pettyCashExpenses.length&&<tr><td colSpan={9}>لا توجد مصروفات.</td></tr>}
       </tbody></table></div>
       <div className="data-table-wrap"><h3>تسوية المصروفات المعتمدة</h3><p>سيتم تسوية جميع المصروفات المسودة للعهدة المختارة في قيد يومية واحد.</p>
@@ -266,6 +287,43 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         {pettyHandoverRows.map(row=><tr key={row.id}><td>{row.handover_date}</td><td>{row.previous_custodian_name}</td><td>{row.new_custodian_name}</td><td>{money(row.actual_balance)}</td><td>{row.notes||"—"}</td></tr>)}
         {!pettyHandoverRows.length&&<tr><td colSpan={5}>لا توجد محاضر تسليم محملة.</td></tr>}
       </tbody></table></div>
+      <div className="treasury-form">
+        <h3 className="form-wide">تقارير العهدة</h3>
+        <label>العهدة لكشف الحركة<select value={pettyExpenseForm.fund} onChange={e=>setPettyExpenseForm(v=>({...v,fund:e.target.value}))}>{pettyCashFunds.map(f=><option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}</select></label>
+        <label>من تاريخ<input type="date" value={pettyReportDateFrom} onChange={e=>setPettyReportDateFrom(e.target.value)}/></label>
+        <label>إلى تاريخ<input type="date" value={pettyReportDateTo} onChange={e=>setPettyReportDateTo(e.target.value)}/></label>
+        <label>فرع تقرير المصروفات<select value={pettyReportBranch} onChange={e=>setPettyReportBranch(e.target.value)}><option value="">كل الفروع المتاحة</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
+        <button type="button" disabled={busy||pettyReportLoading||!pettyExpenseForm.fund} onClick={()=>void loadPettyCashReports()}>عرض كشف الحركة وتقارير المصروفات</button>
+        {pettyReportLoading&&<p className="form-wide">جارٍ تحميل تقارير العهدة…</p>}
+      </div>
+      {pettyStatement&&<>
+        <div className="treasury-summary-grid">
+          <div><small>رصيد أول المدة</small><strong>{money(pettyStatement.opening_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>إجمالي الوارد</small><strong>{money(pettyStatement.total_inflows)} {baseCurrencyCode}</strong></div>
+          <div><small>إجمالي المنصرف</small><strong>{money(pettyStatement.total_outflows)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد آخر المدة</small><strong>{money(pettyStatement.closing_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>فرق المطابقة مع الأستاذ</small><strong>{money(pettyStatement.reconciliation_difference)} {baseCurrencyCode}</strong></div>
+        </div>
+        <div className="data-table-wrap"><h3>كشف حركة {pettyStatement.fund_name} · {pettyStatement.branch_name}</h3><table><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>الحساب</th><th>المستند</th><th>القيد</th><th>المبلغ</th></tr></thead><tbody>
+          {pettyStatement.rows.map(row=><tr key={row.type+"-"+row.reference_id}><td>{row.date}</td><td>{row.type==="initial"?"تمويل تأسيسي":row.type==="replenishment"?"تغذية":row.type==="closure_return"?"رد متبقي":row.type==="expense"?"مصروف":row.type==="count_shortage"?"عجز جرد":"زيادة جرد"}</td><td>{row.description}</td><td>{row.account_code} · {row.account_name}</td><td>{row.document_number}</td><td>{row.journal_number||"—"}</td><td>{money(row.amount)}</td></tr>)}
+          {!pettyStatement.rows.length&&<tr><td colSpan={7}>لا توجد حركات خلال الفترة المحددة.</td></tr>}
+        </tbody></table></div>
+      </>}
+      {pettyExpenseReport&&<>
+        <div className="treasury-summary-grid">
+          <div><small>إجمالي المصروفات</small><strong>{money(pettyExpenseReport.total_expenses)} {baseCurrencyCode}</strong></div>
+          <div><small>عدد المصروفات غير المسواة</small><strong>{pettyExpenseReport.unsettled_count}</strong></div>
+          <div><small>قيمة غير المسوى</small><strong>{money(pettyExpenseReport.unsettled_total)} {baseCurrencyCode}</strong></div>
+        </div>
+        <div className="data-table-wrap"><h3>المصروفات حسب الفرع والحساب</h3><table><thead><tr><th>الفرع</th><th>الحساب</th><th>عدد المصروفات</th><th>الإجمالي</th></tr></thead><tbody>
+          {pettyExpenseReport.by_branch_account.map(row=><tr key={row.fund__branch_id+"-"+row.expense_account_id}><td>{row.fund__branch__name_ar}</td><td>{row.expense_account__code} · {row.expense_account__name_ar}</td><td>{row.expense_count}</td><td>{money(row.total_amount)}</td></tr>)}
+          {!pettyExpenseReport.by_branch_account.length&&<tr><td colSpan={4}>لا توجد مصروفات خلال الفترة المحددة.</td></tr>}
+        </tbody></table></div>
+        <div className="data-table-wrap"><h3>المصروفات غير المسواة</h3><table><thead><tr><th>التاريخ</th><th>الفرع</th><th>العهدة</th><th>البيان</th><th>الحساب</th><th>الحالة</th><th>المبلغ</th></tr></thead><tbody>
+          {pettyExpenseReport.unsettled_expenses.map(row=><tr key={row.id}><td>{row.expense_date}</td><td>{row.branch_name}</td><td>{row.fund_name}</td><td>{row.description}</td><td>{row.expense_account_code} · {row.expense_account_name}</td><td>{row.status==="draft"?"مسودة":row.status==="pending_approval"?"بانتظار الاعتماد":row.status==="approved"?"معتمد":row.status==="rejected"?"مرفوض":row.status}</td><td>{money(row.amount)}</td></tr>)}
+          {!pettyExpenseReport.unsettled_expenses.length&&<tr><td colSpan={7}>لا توجد مصروفات غير مسواة.</td></tr>}
+        </tbody></table></div>
+      </>}
     </>:null}
     {tab==="cashflow"?<>
       <div className="treasury-form">
