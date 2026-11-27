@@ -154,6 +154,25 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(position.foreign_amount, Decimal("5000.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("150000.0000"))
 
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 15), rate=Decimal("30"),
+        )
+        payment = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account_id=created.data["id"], counter_account=self.revenue_gl,
+            kind="payment", document_number="TR-USD-OPEN-SPEND",
+            transaction_date=date(2026, 3, 15), amount=Decimal("30000"),
+            transaction_currency=usd, transaction_amount=Decimal("1000"),
+            exchange_rate=Decimal("30"), exchange_rate_date=date(2026, 3, 15),
+            description="استخدام جزء من الرصيد الافتتاحي الأجنبي",
+        )
+        from treasury.services import post_treasury_transaction
+        post_treasury_transaction(payment.pk, user=self.user)
+        position.refresh_from_db()
+        self.assertEqual(position.foreign_amount, Decimal("4000.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("120000.0000"))
+
     def test_foreign_treasury_opening_balance_rejects_unapproved_rate(self):
         Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         opening_gl = ChartOfAccount.objects.create(
