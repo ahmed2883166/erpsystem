@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashTransfer, PettyCashCount
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -1588,3 +1588,108 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
             f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=30&branch={other.pk}"
         )
         self.assertEqual(denied.status_code, 403, denied.data)
+
+
+class PettyCashWorkflowTests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(code="PC", name_ar="شركة العهدة", country="EG", activity="commercial", base_currency=currency)
+        self.branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        self.year = FiscalYear.objects.create(company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        self.user = get_user_model().objects.create_user(username="petty-cash-user", password="test-password")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(self.user)
+        self.cash_gl = ChartOfAccount.objects.create(company=self.company, code="1100", name_ar="الخزينة الرئيسية", nature=ChartOfAccount.Nature.ASSET)
+        self.petty_gl = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="عهدة نثرية", nature=ChartOfAccount.Nature.ASSET)
+        self.equity_gl = ChartOfAccount.objects.create(company=self.company, code="3000", name_ar="حقوق ملكية", nature=ChartOfAccount.Nature.EQUITY)
+        self.expense_gl = ChartOfAccount.objects.create(company=self.company, code="6100", name_ar="مصروفات مكتبية", nature=ChartOfAccount.Nature.EXPENSE)
+        self.cash = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.cash_gl, kind="cash", code="CASH-PC", name_ar="الخزينة الرئيسية")
+        self.petty_account = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.petty_gl, kind="cash", code="PETTY-PC", name_ar="عهدة المكتب")
+        opening = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="PC-OPEN-001", entry_date=date(2026, 1, 1),
+            description="رصيد افتتاحي للاختبار", source_type=JournalEntry.Source.MANUAL,
+            created_by=self.user,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=opening, account=self.cash_gl, debit=Decimal("1000"), credit=0),
+            JournalLine(entry=opening, account=self.equity_gl, debit=0, credit=Decimal("1000")),
+        ])
+        post_journal(opening.pk, actor=self.user)
+
+    def _create_fund(self):
+        response = self.client.post("/api/treasury/petty-cash-funds/", {
+            "company": self.company.pk, "branch": self.branch.pk, "code": "PC-01",
+            "name": "عهدة المكتب", "custodian": self.user.pk,
+            "funding_account": self.cash.pk, "petty_cash_account": self.petty_account.pk,
+            "authorized_amount": "500",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data["id"]
+
+    def test_imprest_fund_issue_settlement_replenishment_and_count(self):
+        fund_id = self._create_fund()
+        funded = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/fund/",
+            {"amount": "500", "transaction_date": "2026-03-01"}, format="json",
+        )
+        self.assertEqual(funded.status_code, 201, funded.data)
+        transfer = TreasuryTransaction.objects.get(pk=funded.data["transfer_id"])
+        self.assertEqual(transfer.kind, TreasuryTransaction.Kind.TRANSFER)
+        self.assertEqual(transfer.status, TreasuryTransaction.Status.POSTED)
+
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "شراء أدوات مكتبية", "amount": "100",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-100",
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+
+        settled = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/settle/",
+            {"expense_ids": [expense.data["id"]], "settlement_date": "2026-03-03"},
+            format="json",
+        )
+        self.assertEqual(settled.status_code, 201, settled.data)
+        journal = JournalEntry.objects.get(pk=settled.data["journal_entry"])
+        self.assertEqual(journal.status, JournalEntry.Status.POSTED)
+        self.assertEqual(journal.lines.get(account=self.expense_gl).debit, Decimal("100"))
+        self.assertEqual(journal.lines.get(account=self.petty_gl).credit, Decimal("100"))
+        self.assertEqual(PettyCashExpense.objects.get(pk=expense.data["id"]).status, PettyCashExpense.Status.SETTLED)
+
+        balance = self.client.get(f"/api/treasury/petty-cash-funds/{fund_id}/balance/")
+        self.assertEqual(balance.status_code, 200, balance.data)
+        self.assertEqual(Decimal(str(balance.data["book_balance"])), Decimal("400"))
+
+        replenished = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/replenish/",
+            {"amount": "100", "transaction_date": "2026-03-04"}, format="json",
+        )
+        self.assertEqual(replenished.status_code, 200, replenished.data)
+        self.assertEqual(PettyCashSettlement.objects.get(pk=settled.data["settlement_id"]).replenished_amount, Decimal("100"))
+
+        count = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/count/",
+            {"count_date": "2026-03-04", "actual_balance": "498", "notes": "عجز فعلي 2"},
+            format="json",
+        )
+        self.assertEqual(count.status_code, 201, count.data)
+        self.assertEqual(Decimal(str(count.data["expected_balance"])), Decimal("500"))
+        self.assertEqual(Decimal(str(count.data["variance"])), Decimal("-2"))
+
+    def test_petty_cash_settlement_cannot_exceed_fund_balance(self):
+        fund_id = self._create_fund()
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف دون تمويل", "amount": "10",
+            "expense_account": self.expense_gl.pk,
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        settled = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/settle/",
+            {"expense_ids": [expense.data["id"]], "settlement_date": "2026-03-03"},
+            format="json",
+        )
+        self.assertEqual(settled.status_code, 400)
+        self.assertEqual(PettyCashSettlement.objects.count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(description__contains="تسوية مصروفات العهدة").count(), 0)
