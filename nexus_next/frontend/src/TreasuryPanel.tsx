@@ -257,7 +257,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
           <button className="primary-button" type="button" disabled={busy||!statementFile} onClick={()=>void previewStatement()}>معاينة الملف</button>
           {statementPreview&&<div className="treasury-import-preview">
             <div className="treasury-summary-grid"><div><small>إجمالي الحركات</small><strong>{statementPreview.total}</strong></div><div><small>حركات جديدة</small><strong>{statementPreview.new_count}</strong></div><div><small>مكررات مستبعدة</small><strong>{statementPreview.duplicate_count}</strong></div></div>
-            <small>الملف: {statementPreview.file_name} — لن يتم حفظ أي حركة قبل الضغط على تأكيد الاستيراد.</small>
+            <small>الملف: {statementPreview.file_name} — لن يتم حفظ أي حركة قبل الضغط على تأكيد الاستيراد.</small>{statementPreview.rows_truncated&&<small>المعاينة تعرض أول 100 حركة جديدة فقط؛ سيتم فحص الملف كاملًا عند التأكيد.</small>}
             <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان</th><th>المرجع</th></tr></thead><tbody>
               {statementPreview.rows.slice(0,30).map((row,index)=><tr key={index}><td>{row.date}</td><td>{money(row.amount)}</td><td>{row.description}</td><td>{row.reference}</td></tr>)}
               {!statementPreview.rows.length&&<tr><td colSpan={4}>لا توجد حركات جديدة؛ كل الحركات مكررة.</td></tr>}
