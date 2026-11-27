@@ -6,8 +6,8 @@ This change adds landed-cost capitalization for freight, customs, insurance, cle
 
 ## Source document and controls
 
-- A landed-cost document must reference a posted direct-expense supplier invoice from the same company and supplier.
-- Only invoice lines with an active, postable expense account are eligible as the credit source for reclassification.
+- A landed-cost document must reference a posted direct-expense supplier invoice from the same company. The source vendor may be a freight forwarder, customs broker, insurer, or other service supplier and need not be the goods supplier.
+- Only invoice lines with an active, detail-level expense account that permits posting are eligible as the credit source for reclassification.
 - Every allocation references one posted purchase-receipt line and one eligible expense invoice line.
 - Allocation totals must not exceed the eligible expense-line amount; a posted source invoice line cannot be capitalized twice beyond its unallocated balance.
 - Documents are immutable after posting. Corrections use a controlled reversal, not edits or deletion.
@@ -20,6 +20,7 @@ This change adds landed-cost capitalization for freight, customs, insurance, cle
 3. Internal transfers are not treated as final consumption. The child layer remains part of the original receipt lineage and receives the revised unit cost.
 4. The sum of remaining quantity and final-consumed quantity must equal the receipt quantity. Missing or inconsistent lineage blocks posting.
 5. Amounts are rounded to the company's base-currency precision; any residual is assigned deterministically to the largest unrounded bucket. The allocation must reconcile exactly to its source amount.
+6. Current entry uses manual amounts per receipt line. Automatic allocation by value, quantity, weight, or volume is intentionally not enabled until the allocation rules and reliable master-data inputs are implemented and tested.
 
 ## Cost and accounting effects
 
