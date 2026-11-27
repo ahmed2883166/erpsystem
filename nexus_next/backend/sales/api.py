@@ -22,7 +22,8 @@ from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
-from inventory.models import StockMovement
+from inventory.models import Product, StockMovement
+from customers.models import Customer
 from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
@@ -1215,18 +1216,34 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         report = self.sales_performance(request).data
         company = Company.objects.select_related("base_currency").get(pk=report["company"])
         currency_code = company.base_currency.code
+        branch_label = (
+            Branch.objects.filter(pk=report["branch"], company_id=company.pk)
+            .values_list("name_ar", flat=True).first() if report["branch"] else "كل الفروع"
+        )
+        customer_label = (
+            Customer.objects.filter(pk=report["customer_filter"], company_id=company.pk)
+            .values_list("name_ar", flat=True).first() if report["customer_filter"] else "كل العملاء"
+        )
+        product_label = (
+            Product.objects.filter(pk=report["product_filter"], company_id=company.pk)
+            .values_list("name_ar", flat=True).first() if report["product_filter"] else "كل الأصناف"
+        )
+
+        def safe_text(value):
+            value = str(value or "")
+            return "'" + value if value[:1] in ("=", "+", "-", "@", "\\t", "\\r") else value
 
         workbook = Workbook()
         summary = workbook.active
         summary.title = "ملخص"
         summary.sheet_view.rightToLeft = True
         summary.append(["تقرير أداء المبيعات"])
-        summary.append(["الشركة", company.name_ar])
+        summary.append(["الشركة", safe_text(company.name_ar)])
         summary.append(["العملة الأساسية", currency_code])
         summary.append(["من تاريخ", report["date_from"], "إلى تاريخ", report["date_to"]])
-        summary.append(["الفرع", report["branch"] or "كل الفروع"])
-        summary.append(["العميل", report["customer_filter"] or "كل العملاء"])
-        summary.append(["الصنف", report["product_filter"] or "كل الأصناف"])
+        summary.append(["الفرع", safe_text(branch_label)])
+        summary.append(["العميل", safe_text(customer_label)])
+        summary.append(["الصنف", safe_text(product_label)])
         summary.append([])
         summary.append(["المؤشر", "القيمة"])
         total_labels = (
@@ -1248,7 +1265,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         customers.append(customer_headers)
         for row in report["by_customer"]:
             customers.append([
-                row["customer_name"], row["invoice_count"], Decimal(row["quantity_sold"]),
+                safe_text(row["customer_name"]), row["invoice_count"], Decimal(row["quantity_sold"]),
                 Decimal(row["quantity_returned"]), Decimal(row["sales_net"]), Decimal(row["return_net"]),
                 Decimal(row["sales_tax"]), Decimal(row["return_tax"]), Decimal(row["net_sales"]),
                 Decimal(row["net_cost"]), Decimal(row["gross_profit"]),
@@ -1261,7 +1278,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         products.append(product_headers)
         for row in report["by_product"]:
             products.append([
-                row["product_code"], row["product_name"], row["invoice_count"],
+                safe_text(row["product_code"]), safe_text(row["product_name"]), row["invoice_count"],
                 Decimal(row["quantity_sold"]), Decimal(row["quantity_returned"]),
                 Decimal(row["sales_net"]), Decimal(row["return_net"]), Decimal(row["sales_tax"]),
                 Decimal(row["return_tax"]), Decimal(row["net_sales"]), Decimal(row["net_cost"]),
@@ -1271,6 +1288,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         for sheet in workbook.worksheets:
             sheet.freeze_panes = "A2" if sheet is not summary else "A9"
             sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.page_setup.orientation = "landscape"
             sheet.page_setup.fitToWidth = 1
             sheet.page_setup.fitToHeight = 0
             for cell in sheet[1]:
