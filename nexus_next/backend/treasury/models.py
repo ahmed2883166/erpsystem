@@ -58,7 +58,12 @@ class TreasuryAccount(models.Model):
         if self.company_id:
             is_foreign = self.currency_code != self.company.base_currency.code
             fx_values = (self.opening_foreign_amount, self.opening_exchange_rate, self.opening_exchange_rate_date)
-            if is_foreign and any(value is not None for value in fx_values):
+            supplied_fx_opening = (
+                self.opening_foreign_amount > 0
+                or self.opening_exchange_rate is not None
+                or self.opening_exchange_rate_date is not None
+            )
+            if is_foreign and supplied_fx_opening:
                 if not all(value is not None for value in fx_values) or self.opening_foreign_amount <= 0 or self.opening_exchange_rate <= 0 or self.opening_balance <= 0:
                     raise ValidationError("الرصيد الافتتاحي الأجنبي يتطلب المبلغ الأجنبي والقيمة الأساسية وسعر الصرف وتاريخه.")
                 approved = ExchangeRate.objects.filter(
