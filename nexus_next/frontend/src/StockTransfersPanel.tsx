@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   stockApi,
   type Product,
@@ -66,7 +66,7 @@ export default function StockTransfersPanel({
     void refresh();
   }, [companyId]);
 
-  const createTransfer = async (event: React.FormEvent<HTMLFormElement>) => {
+  const createTransfer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
     setError("");
@@ -170,7 +170,7 @@ export default function StockTransfersPanel({
             <label>رقم التحويل<input required maxLength={40} value={form.transfer_number} onChange={(event) => setForm({ ...form, transfer_number: event.target.value })} /></label>
             <label>تاريخ التحويل<input type="date" required value={form.transfer_date} onChange={(event) => setForm({ ...form, transfer_date: event.target.value })} /></label>
             <label>مخزن المصدر<select required value={form.source_warehouse} onChange={(event) => setForm({ ...form, source_warehouse: event.target.value })}><option value="">اختر مخزن المصدر</option>{activeWarehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} - {warehouse.name_ar}</option>)}</select></label>
-            <label>مخزن الوجهة<select required value={form.destination_warehouse} onChange={(event) => setForm({ ...form, destination_warehouse: event.target.value }}><option value="">اختر مخزن الوجهة</option>{activeWarehouses.filter((warehouse) => String(warehouse.id) !== form.source_warehouse).map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} - {warehouse.name_ar}</option>)}</select></label>
+            <label>مخزن الوجهة<select required value={form.destination_warehouse} onChange={(event) => setForm({ ...form, destination_warehouse: event.target.value })}><option value="">اختر مخزن الوجهة</option>{activeWarehouses.filter((warehouse) => String(warehouse.id) !== form.source_warehouse).map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} - {warehouse.name_ar}</option>)}</select></label>
             <div className="inventory-wide inventory-line-editor">
               <div className="inventory-line-heading"><strong>أصناف التحويل</strong><button type="button" className="add-line-button" onClick={() => setLines((current) => [...current, { product: "", quantity: "1", expiry_date: "" }])}>＋ إضافة صنف</button></div>
               <div className="data-table-wrap"><table><thead><tr><th>#</th><th>الصنف</th><th>الكمية المشحونة</th><th>الصلاحية</th><th>إجراء</th></tr></thead><tbody>
