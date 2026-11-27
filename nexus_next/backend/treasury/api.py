@@ -21,6 +21,7 @@ from .services import (
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 import re
 import zipfile
 
@@ -48,6 +49,8 @@ def _parse_statement_amount(value):
     amount = Decimal(raw)
     if not amount.is_finite() or amount == 0:
         raise ValueError("المبلغ يجب أن يكون رقمًا غير صفري.")
+    if amount != amount.quantize(Decimal("0.0001")) or abs(amount) >= Decimal("10000000000000000"):
+        raise ValueError("المبلغ يجب ألا يتجاوز 16 رقمًا صحيحًا وأربع منازل عشرية.")
     return amount
 
 
@@ -1163,6 +1166,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError("لا يمكن استيراد كشف إلى تسوية معتمدة.")
         if recon.bank_account.branch_id and not can_access_branch(request.user, recon.bank_account.branch_id, recon.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(request.user, recon.company_id):
+            raise PermissionDenied("الحساب البنكي العام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         upload = request.FILES.get("file")
         if not upload:
             raise ValidationError({"file": "اختر ملف كشف البنك أولًا."})
@@ -1170,7 +1175,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError({"file": "الحد الأقصى لحجم الملف 10 ميجابايت."})
         try:
             parsed = _parse_bank_statement(upload, recon.statement_date)
-        except (UnicodeDecodeError, csv.Error, ValueError, InvalidOperation, zipfile.BadZipFile) as exc:
+        except (UnicodeDecodeError, csv.Error, ValueError, InvalidOperation, zipfile.BadZipFile, InvalidFileException) as exc:
             raise ValidationError({"file": str(exc) or "تعذر قراءة ملف كشف البنك."}) from None
         existing = BankStatementLine.objects.filter(
             reconciliation__bank_account_id=recon.bank_account_id,
