@@ -89,6 +89,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
     counter_account_code = serializers.CharField(source="counter_account.code", read_only=True, default="")
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, default="")
     reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, default="")
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, default="")
 
     class Meta:
         model = TreasuryTransaction
