@@ -2965,7 +2965,9 @@ class PurchasingWorkflowTests(APITestCase):
             "invoice_date": date.today().isoformat(),
             "lines": [{
                 "description": "تنفيذ خدمة الصيانة المعتمدة", "expense_account": expense.pk,
-                "billed_quantity": "2", "unit_price": "800", "tax_rate": "0",
+                # Same net value and tax as the accepted work, but the billed
+                # quantity is wrong; value-only matching must not allow posting.
+                "billed_quantity": "1", "unit_price": "1500", "tax_rate": "14",
             }],
         }, format="json")
         self.assertEqual(linked_invoice.status_code, 201, linked_invoice.data)
@@ -2975,7 +2977,7 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/purchasing/invoices/{linked_invoice.data['id']}/post/", {}, format="json",
         )
         self.assertEqual(overvalued_post.status_code, 400, overvalued_post.data)
-        self.assertIn("لا يطابق", str(overvalued_post.data))
+        self.assertIn("كمية فاتورة الخدمة", str(overvalued_post.data))
         self.assertEqual(
             PurchaseInvoice.objects.get(pk=linked_invoice.data["id"]).status,
             PurchaseInvoice.Status.DRAFT,
