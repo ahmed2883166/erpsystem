@@ -157,7 +157,7 @@ export type LandedCostDocument = {
 };
 export type LandedCostReport = {
   company:number|string; date_from:string|null; date_to:string|null; branch:number|null; supplier:number|null; product:number|null;
-  totals:{allocated:string;inventory:string;cogs:string;adjustment_loss:string};
+  totals:{allocated:string;inventory:string;cogs:string;adjustment_loss:string;reversed:string};
   rows:{
     document_id:number;document_number:string;document_date:string;document_status:string;
     source_invoice_id:number;source_invoice_number:string;supplier_id:number;supplier_name:string;
