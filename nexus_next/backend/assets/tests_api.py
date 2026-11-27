@@ -696,7 +696,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(overpayment.status_code, 400, overpayment.data)
         self.assertFalse(AssetSupplierPayment.objects.filter(payment_number="FA-PAY-1002").exists())
 
-    def _create_supplier_asset_invoice(self, amount="5000.0000"):
+    def _create_supplier_asset_invoice(self, amount="100000.0000"):
         payable = self._account("2100", "الموردون", "liability")
         AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
         supplier = Supplier.objects.create(
