@@ -1394,12 +1394,18 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
 
         for source_id, requested in requested_by_source.items():
             source_line = PurchaseInvoiceLine.objects.select_related("invoice").get(pk=source_id)
+            nonrecoverable_tax = (
+                source_line.tax_amount
+                if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                else Decimal("0")
+            )
+            capitalizable_amount = source_line.net_amount + nonrecoverable_tax
             already_allocated = LandedCostAllocation.objects.filter(
                 source_invoice_line_id=source_id,
             ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
                 total=Sum("amount"),
             )["total"] or Decimal("0")
-            if already_allocated + requested > source_line.net_amount:
+            if already_allocated + requested > capitalizable_amount:
                 raise serializers.ValidationError({
                     "allocations": f"إجمالي الرسملة يتجاوز صافي بند المصروف {source_line.description or source_line.pk}."
                 })
@@ -1420,12 +1426,18 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
             grouped[row["source_invoice_line"].pk] = grouped.get(row["source_invoice_line"].pk, Decimal("0")) + row["amount"]
         for source_id, requested in grouped.items():
             source_line = PurchaseInvoiceLine.objects.select_for_update(of=("self",)).get(pk=source_id)
+            nonrecoverable_tax = (
+                source_line.tax_amount
+                if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                else Decimal("0")
+            )
+            capitalizable_amount = source_line.net_amount + nonrecoverable_tax
             already_allocated = LandedCostAllocation.objects.filter(
                 source_invoice_line_id=source_id,
             ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
                 total=Sum("amount"),
             )["total"] or Decimal("0")
-            if already_allocated + requested > source_line.net_amount:
+            if already_allocated + requested > capitalizable_amount:
                 raise serializers.ValidationError({"allocations": "تم استهلاك رصيد بند المصروف في رسملة أخرى؛ حدّث البيانات."})
         document = LandedCostDocument.objects.create(**validated_data, total_amount=total)
         for row in allocations:
