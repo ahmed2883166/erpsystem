@@ -4,8 +4,6 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from decimal import Decimal
-import uuid
-from pathlib import Path
 
 from companies.models import Company, Branch, Currency, ExchangeRate
 from accounting.models import ChartOfAccount, JournalEntry
