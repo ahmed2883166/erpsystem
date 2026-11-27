@@ -1609,10 +1609,17 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
         companies = accessible_companies(self.request.user)
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
+        allowed_allocation_scope = (
+            Q(receipt_line__movement__destination_warehouse__branch__in=branches)
+            | Q(receipt_line__movement__destination_warehouse__branch__isnull=True, document__company_id__in=defaults)
+        )
+        inaccessible_documents = LandedCostAllocation.objects.filter(
+            document__company__in=companies,
+        ).exclude(allowed_allocation_scope).values_list("document_id", flat=True)
         return self.queryset.filter(company__in=companies).filter(
             Q(source_invoice__branch__in=branches)
             | Q(source_invoice__branch__isnull=True, company_id__in=defaults)
-        ).distinct()
+        ).exclude(pk__in=inaccessible_documents).distinct()
 
     def create(self, request, *args, **kwargs):
         try:
@@ -1678,3 +1685,121 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
         reversed_document = reverse_landed_cost_document(document.pk, request.user, entry_date)
         return Response(self.get_serializer(reversed_document).data, status=status.HTTP_200_OK)
+
+
+
+    @action(detail=False, methods=("get",))
+    def report(self, request):
+        """تقرير سجل رسملة التكلفة ومطابقة التوزيع مع المخزون وCOGS والخسائر."""
+        qs = self.get_queryset().filter(status__in=(
+            LandedCostDocument.Status.POSTED, LandedCostDocument.Status.REVERSED,
+        )).select_related("source_invoice__supplier").prefetch_related(
+            "allocations__source_invoice_line__expense_account",
+            "allocations__source_invoice_line__tax_code",
+            "allocations__receipt_line__product",
+            "allocations__receipt_line__movement__destination_warehouse",
+            "allocations__distributions__branch",
+        )
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            qs = qs.filter(document_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(document_date__lte=date_to)
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            qs = qs.filter(source_invoice__supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            qs = qs.filter(allocations__receipt_line__product_id=product_id).distinct()
+
+        rows = []
+        totals = {
+            "allocated": Decimal("0"), "inventory": Decimal("0"),
+            "cogs": Decimal("0"), "adjustment_loss": Decimal("0"),
+        }
+        for document in qs.order_by("document_date", "document_number"):
+            for allocation in document.allocations.all():
+                source_line = allocation.source_invoice_line
+                nonrecoverable_tax = (
+                    source_line.tax_amount
+                    if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                    else Decimal("0")
+                )
+                capitalizable = source_line.net_amount + nonrecoverable_tax
+                allocated_to_date = LandedCostAllocation.objects.filter(
+                    source_invoice_line_id=source_line.pk,
+                ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
+                    total=Sum("amount"),
+                )["total"] or Decimal("0")
+                for distribution in allocation.distributions.all():
+                    if branch_id and distribution.branch_id != branch_id:
+                        continue
+                    allocated = (
+                        distribution.inventory_amount + distribution.cogs_amount
+                        + distribution.adjustment_loss_amount
+                    )
+                    totals["allocated"] += allocated
+                    totals["inventory"] += distribution.inventory_amount
+                    totals["cogs"] += distribution.cogs_amount
+                    totals["adjustment_loss"] += distribution.adjustment_loss_amount
+                    rows.append({
+                        "document_id": document.pk,
+                        "document_number": document.document_number,
+                        "document_date": document.document_date.isoformat(),
+                        "document_status": document.status,
+                        "source_invoice_id": document.source_invoice_id,
+                        "source_invoice_number": document.source_invoice.invoice_number,
+                        "supplier_id": document.source_invoice.supplier_id,
+                        "supplier_name": document.source_invoice.supplier.name_ar,
+                        "expense_line_id": source_line.pk,
+                        "expense_description": source_line.description,
+                        "expense_account_code": source_line.expense_account.code,
+                        "receipt_line_id": allocation.receipt_line_id,
+                        "product_id": allocation.receipt_line.product_id,
+                        "product_code": allocation.receipt_line.product.code,
+                        "product_name": allocation.receipt_line.product.name_ar,
+                        "warehouse_id": allocation.receipt_line.movement.destination_warehouse_id,
+                        "branch_id": distribution.branch_id,
+                        "branch_name": distribution.branch.name_ar,
+                        "allocation_basis": allocation.basis,
+                        "allocation_amount": str(allocated),
+                        "source_line_capitalizable_amount": str(capitalizable),
+                        "source_line_allocated_to_date": str(allocated_to_date),
+                        "source_line_unallocated": str(max(capitalizable - allocated_to_date, Decimal("0"))),
+                        "inventory_amount": str(distribution.inventory_amount),
+                        "cogs_amount": str(distribution.cogs_amount),
+                        "adjustment_loss_amount": str(distribution.adjustment_loss_amount),
+                        "journal_entry": distribution.journal_entry_id,
+                        "reversal_journal_entry": distribution.reversal_journal_entry_id,
+                    })
+        return Response({
+            "company": request.query_params.get("company"),
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id, "product": product_id,
+            "totals": {key: str(value) for key, value in totals.items()},
+            "rows": rows,
+        })
