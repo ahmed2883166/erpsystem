@@ -131,7 +131,7 @@ def _parse_bank_statement(upload, statement_date):
             match = re.search(r"^:61:(\d{6})(?:\d{4})?([CD])([A-Z])?([0-9,]+(?:\.[0-9]+)?)", block, flags=re.M)
             if not match:
                 continue
-            amount = _parse_statement_amount(match.group(4))
+            amount = _parse_statement_amount(match.group(4).replace(",", "."))
             amount = -abs(amount) if match.group(2) == "D" else abs(amount)
             ref_match = re.search(r"^:61:.*?//([^\r\n]+)", block, flags=re.M)
             desc_match = re.search(r"^:86:(.*(?:\n[^:][^\n]*)*)", block, flags=re.M)
