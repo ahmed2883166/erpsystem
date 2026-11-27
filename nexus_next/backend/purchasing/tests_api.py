@@ -3920,3 +3920,98 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             excel["Content-Type"],
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    def test_supplier_aging_excludes_credit_balance_after_return_refund_and_reversal(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "receipt": receipt_id, "invoice_number": "INV-AGE-REFUND-001",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "2",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        # Refunds require an actual supplier credit: settle the invoice first,
+        # then the posted return creates the credit balance to be refunded.
+        bank = ChartOfAccount.objects.create(
+            company=self.company, code="1118", name_ar="بنك اختبار أعمار المورد",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-AGE-REFUND",
+            name_ar="بنك اختبار أعمار المورد", currency_code="EGP",
+            opening_balance=Decimal("228"),
+        )
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-AGE-REFUND-001",
+            "payment_date": "2026-03-11", "method": "bank",
+            "payment_account": bank.pk, "amount": "228",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "return_number": "RET-AGE-REFUND-001",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        bank = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK,
+        ).account
+        refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "return_document": posted_return.data["id"],
+            "refund_number": "REF-AGE-REFUND-001", "refund_date": "2026-03-13",
+            "method": "bank", "payment_account": bank.pk, "amount": "50",
+        }, format="json")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        posted_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+        invoice_detail = self.client.get(
+            f"/api/purchasing/invoices/{invoice.data['id']}/",
+        )
+        self.assertEqual(invoice_detail.status_code, 200, invoice_detail.data)
+        self.assertEqual(Decimal(invoice_detail.data["balance_due"]), Decimal("0"))
+
+        before_reversal = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-14"},
+        )
+        self.assertEqual(before_reversal.status_code, 200, before_reversal.data)
+        self.assertEqual(Decimal(before_reversal.data["totals"]["total_due"]), Decimal("0"))
+
+        reversed_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(reversed_refund.status_code, 200, reversed_refund.data)
+        after_reversal = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-17"},
+        )
+        self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
+        self.assertEqual(Decimal(after_reversal.data["totals"]["total_due"]), Decimal("0"))

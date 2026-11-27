@@ -990,7 +990,9 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
         invoices = self.get_queryset().filter(
             company_id=company_id, status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of
-        ).select_related("supplier", "branch", "receipt__warehouse").prefetch_related("payments", "returns")
+        ).select_related("supplier", "branch", "receipt__warehouse").prefetch_related(
+            "payments", "returns", "returns__refunds",
+        )
         if branch_id:
             invoices = invoices.filter(Q(branch_id=branch_id) | Q(receipt__warehouse__branch_id=branch_id))
         suppliers = {}
@@ -1010,7 +1012,22 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                     )
                 )
             ), Decimal("0"))
-            balance_due = invoice.grand_total - paid - returned
+            # A posted cash refund credits the supplier subledger after the
+            # return debit. If that refund is later reversed, include it only
+            # for as-of dates before the reversal.
+            refunded = sum((
+                refund.amount
+                for returned_item in invoice.returns.all()
+                for refund in returned_item.refunds.all()
+                if refund.refund_date <= as_of and (
+                    refund.status == SupplierRefund.Status.POSTED
+                    or (
+                        refund.status == SupplierRefund.Status.REVERSED
+                        and (refund.reversal_date is None or refund.reversal_date > as_of)
+                    )
+                )
+            ), Decimal("0"))
+            balance_due = invoice.grand_total - paid - returned + refunded
             if balance_due <= 0:
                 continue
             due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)

@@ -333,7 +333,11 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         returned = obj.returns.filter(status=SupplierReturn.Status.POSTED).aggregate(
             total=Sum("grand_total")
         )["total"] or Decimal("0")
-        return str(max(obj.grand_total - paid - returned, Decimal("0")))
+        refunded = SupplierRefund.objects.filter(
+            return_document__invoice=obj,
+            status=SupplierRefund.Status.POSTED,
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        return str(max(obj.grand_total - paid - returned + refunded, Decimal("0")))
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
