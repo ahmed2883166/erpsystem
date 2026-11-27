@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 
-from .api import PurchaseInvoiceViewSet, PurchaseOrderViewSet, PurchaseReceiptViewSet, PurchaseRequisitionViewSet, PurchaseRFQViewSet, PurchaseServiceAcceptanceViewSet, SupplierQuotationViewSet, SupplierPaymentViewSet, SupplierRefundViewSet, SupplierReturnViewSet
+from .api import LandedCostDocumentViewSet, PurchaseInvoiceViewSet, PurchaseOrderViewSet, PurchaseReceiptViewSet, PurchaseRequisitionViewSet, PurchaseRFQViewSet, PurchaseServiceAcceptanceViewSet, SupplierQuotationViewSet, SupplierPaymentViewSet, SupplierRefundViewSet, SupplierReturnViewSet
 
 router = DefaultRouter()
 router.register("orders", PurchaseOrderViewSet, basename="purchase-order")
@@ -10,6 +10,7 @@ router.register("quotations", SupplierQuotationViewSet, basename="supplier-quota
 router.register("service-acceptances", PurchaseServiceAcceptanceViewSet, basename="purchase-service-acceptance")
 router.register("receipts", PurchaseReceiptViewSet, basename="purchase-receipt")
 router.register("invoices", PurchaseInvoiceViewSet, basename="purchase-invoice")
+router.register("landed-costs", LandedCostDocumentViewSet, basename="landed-cost")
 router.register("payments", SupplierPaymentViewSet, basename="supplier-payment")
 router.register("returns", SupplierReturnViewSet, basename="supplier-return")
 router.register("refunds", SupplierRefundViewSet, basename="supplier-refund")
