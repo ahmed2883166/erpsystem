@@ -793,3 +793,187 @@ class StockPostingServiceTests(TestCase):
         response = StockBalanceViewSet.as_view({"get": "reconciliation"})(request)
 
         self.assertEqual(response.status_code, 403)
+
+
+class StockTransferLifecycleTests(StockPostingServiceTests):
+    """اختبارات دورة التحويل بين الفروع والبضاعة بالطريق والاستلام الجزئي."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+
+    def _transfer(self, number="TRF-001", quantity="10"):
+        from .models import StockTransfer, StockTransferLine
+        self.destination_branch = Branch.objects.create(
+            company=self.company, code="TRF-BR", name_ar="فرع اختبار التحويل",
+        )
+        self.destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=self.destination_branch,
+            code="TRF-WH", name_ar="مخزن اختبار التحويل",
+        )
+        clearing = self._account(
+            "2390", "تسوية تحويل بين الفروع", ChartOfAccount.Nature.LIABILITY,
+        )
+        AccountRole.objects.get_or_create(
+            company=self.company,
+            role=AccountRole.Role.INTER_BRANCH_CLEARING,
+            defaults={"account": clearing},
+        )
+        transfer = StockTransfer.objects.create(
+            company=self.company,
+            transfer_number=number,
+            transfer_date=date(2026, 2, 2),
+            source_warehouse=self.warehouse,
+            destination_warehouse=self.destination_warehouse,
+            created_by=self.user,
+        )
+        line = StockTransferLine.objects.create(
+            transfer=transfer,
+            product=self.product,
+            quantity=Decimal(quantity),
+        )
+        return transfer, line
+
+    def _seed_source_stock(self, quantity="10", unit_cost="5"):
+        receipt = self._movement(
+            "TRF-SEED-" + quantity.replace(".", ""),
+            StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse,
+            quantity=quantity,
+            unit_cost=unit_cost,
+        )
+        post_stock_movement(receipt.pk, self.user)
+
+    def test_dispatch_moves_stock_to_transit_not_destination(self):
+        from .models import StockTransfer, Warehouse
+        from .transfer_services import dispatch_stock_transfer
+
+        self._seed_source_stock()
+        transfer, line = self._transfer()
+        dispatch_stock_transfer(transfer.pk, self.user)
+
+        transfer.refresh_from_db()
+        transit = Warehouse.objects.get(company=self.company, is_transit=True)
+        source = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        in_transit = StockBalance.objects.get(product=self.product, warehouse=transit)
+        self.assertEqual(transfer.status, StockTransfer.Status.IN_TRANSIT)
+        self.assertEqual(source.quantity, Decimal("0"))
+        self.assertEqual(in_transit.quantity, Decimal("10"))
+        self.assertEqual(in_transit.inventory_value, Decimal("50.0000"))
+        self.assertFalse(StockBalance.objects.filter(
+            product=self.product, warehouse=self.destination_warehouse,
+        ).exists())
+
+    def test_multiple_partial_receipts_preserve_quantity_and_fifo_cost(self):
+        from .models import StockTransfer, StockTransferReceipt, Warehouse
+        from .transfer_services import dispatch_stock_transfer, receive_stock_transfer
+
+        self._seed_source_stock()
+        transfer, line = self._transfer()
+        dispatch_stock_transfer(transfer.pk, self.user)
+        transit = Warehouse.objects.get(company=self.company, is_transit=True)
+
+        first = receive_stock_transfer(
+            transfer.pk, self.user, receipt_date=date(2026, 2, 3),
+            lines=[{"transfer_line": line.pk, "quantity": Decimal("4")}],
+        )
+        transfer.refresh_from_db()
+        line.refresh_from_db()
+        destination = StockBalance.objects.get(product=self.product, warehouse=self.destination_warehouse)
+        in_transit = StockBalance.objects.get(product=self.product, warehouse=transit)
+        self.assertEqual(first.lines.get().quantity, Decimal("4"))
+        self.assertEqual(line.received_quantity, Decimal("4"))
+        self.assertEqual(transfer.status, StockTransfer.Status.PARTIALLY_RECEIVED)
+        self.assertEqual(destination.quantity, Decimal("4"))
+        self.assertEqual(destination.inventory_value, Decimal("20.0000"))
+        self.assertEqual(in_transit.quantity, Decimal("6"))
+        self.assertEqual(in_transit.inventory_value, Decimal("30.0000"))
+
+        receive_stock_transfer(
+            transfer.pk, self.user, receipt_date=date(2026, 2, 4),
+            lines=[{"transfer_line": line.pk, "quantity": Decimal("6")}],
+        )
+        transfer.refresh_from_db()
+        destination.refresh_from_db()
+        in_transit.refresh_from_db()
+        self.assertEqual(transfer.status, StockTransfer.Status.RECEIVED)
+        self.assertIsNotNone(transfer.completed_at)
+        self.assertEqual(StockTransferReceipt.objects.filter(transfer=transfer).count(), 2)
+        self.assertEqual(destination.quantity, Decimal("10"))
+        self.assertEqual(destination.inventory_value, Decimal("50.0000"))
+        self.assertEqual(in_transit.quantity, Decimal("0"))
+        self.assertEqual(in_transit.inventory_value, Decimal("0"))
+
+    def test_over_receipt_is_rejected_without_creating_receipt_or_changing_stock(self):
+        from .models import StockTransferReceipt, Warehouse
+        from .transfer_services import dispatch_stock_transfer, receive_stock_transfer
+        from rest_framework.exceptions import ValidationError
+
+        self._seed_source_stock()
+        transfer, line = self._transfer()
+        dispatch_stock_transfer(transfer.pk, self.user)
+        transit = Warehouse.objects.get(company=self.company, is_transit=True)
+
+        with self.assertRaises(ValidationError):
+            receive_stock_transfer(
+                transfer.pk, self.user, receipt_date=date(2026, 2, 3),
+                lines=[{"transfer_line": line.pk, "quantity": Decimal("11")}],
+            )
+
+        line.refresh_from_db()
+        in_transit = StockBalance.objects.get(product=self.product, warehouse=transit)
+        self.assertEqual(line.received_quantity, Decimal("0"))
+        self.assertEqual(in_transit.quantity, Decimal("10"))
+        self.assertEqual(StockTransferReceipt.objects.filter(transfer=transfer).count(), 0)
+
+    def test_cannot_receive_before_dispatch(self):
+        from .transfer_services import receive_stock_transfer
+        from rest_framework.exceptions import ValidationError
+
+        transfer, line = self._transfer()
+        with self.assertRaises(ValidationError):
+            receive_stock_transfer(
+                transfer.pk, self.user, receipt_date=date(2026, 2, 3),
+                lines=[{"transfer_line": line.pk, "quantity": Decimal("1")}],
+            )
+
+
+    def test_fifo_cost_layers_keep_their_parentage_through_partial_receipts(self):
+        from .models import StockCostLayer, Warehouse
+        from .transfer_services import dispatch_stock_transfer, receive_stock_transfer
+
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+        self._seed_source_stock()
+        source_layer = StockCostLayer.objects.get(product=self.product, warehouse=self.warehouse)
+        transfer, line = self._transfer(number="TRF-FIFO-001")
+        dispatch_stock_transfer(transfer.pk, self.user)
+
+        transit = Warehouse.objects.get(company=self.company, is_transit=True)
+        transit_layer = StockCostLayer.objects.get(product=self.product, warehouse=transit)
+        self.assertEqual(transit_layer.parent_layer_id, source_layer.pk)
+        self.assertEqual(transit_layer.quantity_remaining, Decimal("10"))
+
+        receive_stock_transfer(
+            transfer.pk, self.user, receipt_date=date(2026, 2, 3),
+            lines=[{"transfer_line": line.pk, "quantity": Decimal("4")}],
+        )
+        destination_layers = list(
+            StockCostLayer.objects.filter(product=self.product, warehouse=self.destination_warehouse)
+        )
+        self.assertEqual(len(destination_layers), 1)
+        self.assertEqual(destination_layers[0].parent_layer_id, transit_layer.pk)
+        self.assertEqual(destination_layers[0].quantity_remaining, Decimal("4"))
+        self.assertEqual(destination_layers[0].unit_cost, source_layer.unit_cost)
+
+        receive_stock_transfer(
+            transfer.pk, self.user, receipt_date=date(2026, 2, 4),
+            lines=[{"transfer_line": line.pk, "quantity": Decimal("6")}],
+        )
+        destination_layers = list(
+            StockCostLayer.objects.filter(product=self.product, warehouse=self.destination_warehouse)
+        )
+        self.assertEqual(sum((layer.quantity_remaining for layer in destination_layers), Decimal("0")), Decimal("10"))
+        self.assertTrue(all(layer.parent_layer_id == transit_layer.pk for layer in destination_layers))
+        transit_layer.refresh_from_db()
+        self.assertEqual(transit_layer.quantity_remaining, Decimal("0"))

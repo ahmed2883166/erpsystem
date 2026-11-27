@@ -952,6 +952,31 @@ export type StockBalance = {
   id: number; product: number; product_code: string; product_name: string; warehouse: number;
   warehouse_name: string; location: number | null; location_name: string | null; expiry_date: string | null; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
 };
+export type StockTransferStatus = "draft" | "in_transit" | "partially_received" | "received" | "cancelled";
+export type StockTransferLine = {
+  id: number; product: number; product_code: string; product_name: string; expiry_date: string | null;
+  quantity: string; received_quantity: string; remaining_quantity: string;
+};
+export type StockTransfer = {
+  id: number; company: number; transfer_number: string; transfer_date: string;
+  source_warehouse: number; source_warehouse_name: string;
+  destination_warehouse: number; destination_warehouse_name: string;
+  status: StockTransferStatus; notes: string; lines: StockTransferLine[];
+  dispatch_movement: number | null; created_by: number | null; created_by_name: string | null;
+  dispatched_by: number | null; dispatched_by_name: string | null; dispatched_at: string | null;
+  completed_at: string | null; receipts_count: number; created_at: string; updated_at: string;
+};
+export type StockTransferInTransit = {
+  id: number; transfer_number: string; transfer_date: string;
+  source_warehouse: string; destination_warehouse: string; status: StockTransferStatus;
+  lines: { transfer_line: number; product: number; product_code: string; product_name: string; unit: string;
+    dispatched_quantity: string; received_quantity: string; remaining_quantity: string; expiry_date: string | null }[];
+};
+export type StockTransferReceipt = {
+  id: number; transfer: number; receipt_number: string; receipt_date: string;
+  movement: number; movement_number: string; received_by: number | null; received_at: string;
+  lines: { id: number; transfer_line: number; product_code: string; product_name: string; quantity: string; movement_line: number }[];
+};
 // واجهات حركات المخزون وتقاريره: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const stockApi = {
   // جلب حركات المخزون مرتبة من الأحدث.
@@ -986,6 +1011,16 @@ export const stockApi = {
   valuationIntegrity: (companyId: number, branchId?: number) => request<InventoryValuationIntegrity>(`/api/inventory/balances/valuation-integrity/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب كارت الصنف وحركاته داخل مخزن وفترة محددين.
   stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string, page = 1, pageSize = 50) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}&page=${page}&page_size=${pageSize}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
+  // جلب مستندات التحويل بين الفروع.
+  transfers: (companyId: number) => request<StockTransfer[]>(`/api/inventory/transfers/?company=${companyId}&ordering=-transfer_date`),
+  // جلب الكميات التي ما زالت في عهدة البضاعة بالطريق.
+  inTransitTransfers: (companyId: number) => request<StockTransferInTransit[]>(`/api/inventory/transfers/in-transit/?company=${companyId}`),
+  // إنشاء مسودة تحويل بين مخزنين.
+  createTransfer: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<StockTransfer>("/api/inventory/transfers/", { method: "POST", body: JSON.stringify(payload) }); },
+  // شحن التحويل ونقل المخزون إلى مخزن البضاعة بالطريق.
+  dispatchTransfer: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<StockTransfer>(`/api/inventory/transfers/${id}/dispatch/`, { method: "POST" }); },
+  // تسجيل استلام كلي أو جزئي من البضاعة بالطريق.
+  receiveTransfer: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<StockTransferReceipt>(`/api/inventory/transfers/${id}/receive/`, { method: "POST", body: JSON.stringify(payload) }); },
 };
 
 

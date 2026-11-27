@@ -140,7 +140,7 @@ class ProductViewSet(CompanyScopedViewSet):
 
 class WarehouseViewSet(CompanyScopedViewSet):
     serializer_class = WarehouseSerializer
-    queryset = Warehouse.objects.select_related("company", "branch")
+    queryset = Warehouse.objects.select_related("company", "branch").filter(is_transit=False)
     filterset_fields = ("company", "branch", "is_active")
     search_fields = ("code", "name_ar")
     ordering_fields = ("code", "name_ar", "created_at")
@@ -335,6 +335,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
 
     def _check_warehouse(self, warehouse, company_id):
         """تنفيذ وظيفة _check_warehouse ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
+        if warehouse.is_transit:
+            raise PermissionDenied("مخزن البضاعة بالطريق مخصص لدورة التحويلات ولا يستخدم في الحركات اليدوية.")
         if not warehouse.is_active:
             raise PermissionDenied("لا يمكن استخدام مخزن موقوف.")
         if warehouse.company_id != company_id:

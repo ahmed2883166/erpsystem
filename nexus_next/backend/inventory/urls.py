@@ -5,6 +5,7 @@ from .api import (
     InventoryCountViewSet, InventoryCountLineViewSet,
     UnitOfMeasureViewSet, WarehouseViewSet,
 )
+from .transfer_api import StockTransferReceiptViewSet, StockTransferViewSet
 
 router = DefaultRouter()
 router.register("categories", ProductCategoryViewSet)
@@ -14,6 +15,8 @@ router.register("warehouses", WarehouseViewSet)
 router.register("warehouse-product-settings", WarehouseProductSettingViewSet)
 router.register("locations", StorageLocationViewSet)
 router.register("movements", StockMovementViewSet)
+router.register("transfers", StockTransferViewSet)
+router.register("transfer-receipts", StockTransferReceiptViewSet)
 router.register("counts", InventoryCountViewSet)
 router.register("count-lines", InventoryCountLineViewSet)
 router.register("balances", StockBalanceViewSet)

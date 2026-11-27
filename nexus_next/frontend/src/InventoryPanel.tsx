@@ -4,9 +4,10 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
+import StockTransfersPanel from "./StockTransfersPanel";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type Company, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "transfers" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
 export default function InventoryPanel({ companyId, currency = "", activityAssignments, primaryActivity }: { companyId: number | null; currency?: string; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] }) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
@@ -243,6 +244,7 @@ const submit = async (event: React.FormEvent) => {
     { id: "warehouses", label: "المخازن", count: warehouses.length },
     { id: "locations", label: "مواقع التخزين", count: locations.length },
     { id: "movements", label: "آخر 100 حركة", count: movements.length },
+    { id: "transfers", label: "التحويل بين الفروع", count: 0 },
     { id: "counts", label: "الجرد الفعلي", count: counts.length },
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
     { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
@@ -252,7 +254,7 @@ const submit = async (event: React.FormEvent) => {
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
   return <section className="work-panel inventory-panel">
-    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات. <strong>القيم المالية بالعملة الأساسية: {currency || "—"}</strong></p></div>{tab !== "balances" && tab !== "reports" && tab !== "stock-card" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
+    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات. <strong>القيم المالية بالعملة الأساسية: {currency || "—"}</strong></p></div>{tab !== "balances" && tab !== "reports" && tab !== "stock-card" && tab !== "transfers" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
     <div className="inventory-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab(item.id); setShowForm(false); setSearch(""); }}>{item.label}<b>{item.count}</b></button>)}</div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && <form className="inventory-form" onSubmit={submit}>
@@ -317,8 +319,8 @@ const submit = async (event: React.FormEvent) => {
       </>}
       <div className="inventory-actions"><button className="primary-button" disabled={busy} type="submit">{busy ? "جارٍ الحفظ…" : "حفظ"}</button><button className="subtle-button" type="button" onClick={() => setShowForm(false)}>إلغاء</button></div>
     </form>}
-    <div className="table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث سريع…" /><span className="module-count">{busy ? "جارٍ التحديث…" : "تحديث"}</span><button className="subtle-button" onClick={() => void refresh()}>↻</button></div>
-    <div className="data-table-wrap">
+    <div className="table-toolbar" style={tab === "transfers" ? { display: "none" } : undefined}><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث سريع…" /><span className="module-count">{busy ? "جارٍ التحديث…" : "تحديث"}</span><button className="subtle-button" onClick={() => void refresh()}>↻</button></div>
+    <div className="data-table-wrap" style={tab === "transfers" ? { display: "none" } : undefined}>
       {tab === "products" && <table><thead><tr><th>الكود</th><th>الصنف</th><th>الباركود</th><th>النوع</th><th>تصنيف المخزون</th><th>الوحدة</th><th>سعر البيع</th><th>طريقة التقييم</th><th>الحالة</th></tr></thead><tbody>{filteredProducts.map((p) => <tr key={p.id}><td className="code-cell">{p.code}</td><td>{p.name_ar}</td><td>{p.barcode || "—"}</td><td>{p.product_type === "goods" ? "مخزني" : "خدمة"}</td><td>{p.stock_class === "raw_material" ? "مواد خام" : p.stock_class === "finished_goods" ? "منتجات تامة" : p.stock_class === "operating_supplies" ? "مستلزمات تشغيل" : p.stock_class === "spare_parts" ? "قطع غيار" : "—"}</td><td>{p.unit_name}</td><td>{formatMoney(p.sale_price)}</td><td>{p.costing_method === "fifo" ? "FIFO" : "متوسط مرجح"}</td><td><span className={p.is_active ? "customer-status-active" : "customer-status-inactive"}>{p.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>}
       {tab === "categories" && <table><thead><tr><th>الكود</th><th>اسم المجموعة</th><th>الحالة</th></tr></thead><tbody>{categories.filter((x) => `${x.code} ${x.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
       {tab === "units" && <table><thead><tr><th>الكود</th><th>اسم الوحدة</th><th>الرمز</th><th>الدقة</th><th>الحالة</th></tr></thead><tbody>{units.filter((x) => `${x.code} ${x.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.symbol || "—"}</td><td>{x.decimal_places}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
@@ -529,5 +531,6 @@ const submit = async (event: React.FormEvent) => {
         <p className="inventory-report-note">حد إعادة الطلب يُحدد لكل مخزن وصنف، ويُستخدم الحد العام للصنف كقيمة افتراضية عند غياب الإعداد الخاص. المطابقة تقارن لقطة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة؛ ولا تمثل مطابقة تاريخية لفترة سابقة.</p>
       </div>}
     </div>
+    {tab === "transfers" && <StockTransfersPanel companyId={companyId} products={products} warehouses={warehouses} />}
   </section>;
 }

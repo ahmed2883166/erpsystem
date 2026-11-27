@@ -128,11 +128,15 @@ class Warehouse(models.Model):
     name_ar = models.CharField(max_length=160)
     address = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    is_transit = models.BooleanField(default=False, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("code",)
-        constraints = [models.UniqueConstraint(fields=("company", "code"), name="uq_warehouse_company_code")]
+        constraints = [
+            models.UniqueConstraint(fields=("company", "code"), name="uq_warehouse_company_code"),
+            models.UniqueConstraint(fields=("company",), condition=Q(is_transit=True), name="uq_warehouse_company_transit"),
+        ]
         indexes = [models.Index(fields=("company", "is_active"), name="inv_warehouse_active_idx")]
         verbose_name = "مخزن"
         verbose_name_plural = "المخازن"
@@ -141,6 +145,8 @@ class Warehouse(models.Model):
         super().clean()
         if self.branch_id and self.branch.company_id != self.company_id:
             raise ValidationError({"branch": "الفرع يجب أن يتبع نفس الشركة."})
+        if self.is_transit and self.branch_id:
+            raise ValidationError({"branch": "مخزن البضاعة بالطريق لا يتبع فرعًا تشغيليًا محددًا."})
 
 
 class WarehouseProductSetting(models.Model):
@@ -517,3 +523,140 @@ class InventoryCountLine(models.Model):
                 quantum = Decimal("1").scaleb(-self.product.unit.decimal_places)
                 if self.counted_quantity != self.counted_quantity.quantize(quantum):
                     raise ValidationError({"counted_quantity": "الكمية تتجاوز دقة وحدة قياس الصنف."})
+
+
+
+class StockTransfer(models.Model):
+    """مستند تحويل بين مخزنين يحتفظ بالكميات المشحونة والمستلمة والبضاعة بالطريق."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        IN_TRANSIT = "in_transit", "بضاعة بالطريق"
+        PARTIALLY_RECEIVED = "partially_received", "استلام جزئي"
+        RECEIVED = "received", "مكتمل الاستلام"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="stock_transfers")
+    transfer_number = models.CharField(max_length=40)
+    transfer_date = models.DateField()
+    source_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="stock_transfers_out")
+    destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="stock_transfers_in")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    dispatch_movement = models.OneToOneField(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="dispatched_stock_transfer",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_stock_transfers",
+    )
+    dispatched_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="dispatched_stock_transfers",
+    )
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-transfer_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "transfer_number"), name="uq_stock_transfer_company_number"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "transfer_date"), name="inv_transfer_status_date_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.source_warehouse_id and self.destination_warehouse_id:
+            if self.source_warehouse.company_id != self.company_id or self.destination_warehouse.company_id != self.company_id:
+                raise ValidationError("مخزنا التحويل يجب أن يتبعا نفس الشركة.")
+            if self.source_warehouse_id == self.destination_warehouse_id:
+                raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
+            if self.source_warehouse.is_transit or self.destination_warehouse.is_transit:
+                raise ValidationError("لا يمكن اختيار مخزن البضاعة بالطريق كمخزن تشغيلي.")
+
+
+class StockTransferLine(models.Model):
+    """صنف وكمية التحويل مع رصيد الكمية التي لم تصل بعد."""
+
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_transfer_lines")
+    expiry_date = models.DateField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
+    received_quantity = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("product__code", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transfer", "product", "expiry_date"),
+                nulls_distinct=False,
+                name="uq_stock_transfer_line_batch",
+            ),
+            models.CheckConstraint(condition=Q(quantity__gt=0), name="ck_stock_transfer_qty_positive"),
+            models.CheckConstraint(
+                condition=Q(received_quantity__gte=0) & Q(received_quantity__lte=models.F("quantity")),
+                name="ck_stock_transfer_received_range",
+            ),
+        ]
+
+    @property
+    def remaining_quantity(self):
+        return self.quantity - self.received_quantity
+
+    def clean(self):
+        super().clean()
+        if self.transfer_id and self.product_id:
+            if self.product.company_id != self.transfer.company_id:
+                raise ValidationError({"product": "الصنف لا يتبع شركة التحويل."})
+            if self.product.product_type != Product.ProductType.GOODS:
+                raise ValidationError({"product": "تحويل المخزون متاح للأصناف المخزنية فقط."})
+            if self.product.track_expiry and not self.expiry_date:
+                raise ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
+            if not self.product.track_expiry and self.expiry_date:
+                raise ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
+
+
+class StockTransferReceipt(models.Model):
+    """عملية استلام مستقلة تسمح بتعدد دفعات الاستلام للتحويل الواحد."""
+
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.PROTECT, related_name="receipts")
+    receipt_number = models.CharField(max_length=40)
+    receipt_date = models.DateField()
+    movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, related_name="stock_transfer_receipt",
+    )
+    received_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="stock_transfer_receipts",
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("receipt_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("transfer", "receipt_number"), name="uq_stock_transfer_receipt_number"),
+        ]
+
+
+class StockTransferReceiptLine(models.Model):
+    """يربط الكمية المستلمة ببند التحويل وبند حركة الإدخال الناتجة."""
+
+    receipt = models.ForeignKey(StockTransferReceipt, on_delete=models.CASCADE, related_name="lines")
+    transfer_line = models.ForeignKey(StockTransferLine, on_delete=models.PROTECT, related_name="receipt_lines")
+    movement_line = models.OneToOneField(
+        StockMovementLine, on_delete=models.PROTECT, related_name="stock_transfer_receipt_line",
+    )
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=("receipt", "transfer_line"), name="uq_transfer_receipt_line"),
+            models.CheckConstraint(condition=Q(quantity__gt=0), name="ck_transfer_receipt_qty_positive"),
+        ]
