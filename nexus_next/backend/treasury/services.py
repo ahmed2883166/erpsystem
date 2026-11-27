@@ -538,11 +538,33 @@ def reverse_treasury_fx_revaluation(*, revaluation_id, entry_date, user=None):
     return revaluation
 
 
+def _foreign_treasury_transaction_reversal_blocker(doc, accounts):
+    """Prevent reversing an FX movement while a later live subledger event depends on it."""
+    for account in accounts:
+        later_movements = TreasuryTransaction.objects.filter(
+            status=TreasuryTransaction.Status.POSTED,
+        ).filter(
+            Q(source_account=account) | Q(destination_account=account),
+        ).exclude(pk=doc.pk).filter(posted_at__gt=doc.posted_at)
+        if later_movements.exists():
+            return "توجد حركة خزينة أجنبية رُحّلت بعد هذا المستند؛ اعكس الحركات الأحدث أولًا حتى لا يتشوّه مركز العملة."
+        later_revaluations = TreasuryFxRevaluation.objects.filter(
+            account=account, created_at__gt=doc.posted_at,
+        ).filter(
+            Q(reversal_journal_entry__isnull=True)
+            | Q(reversal_journal_entry__status=JournalEntry.Status.REVERSED)
+        )
+        if later_revaluations.exists():
+            return "يوجد تقييم عملة أحدث من الحركة؛ اعكس إعادة التقييم الأحدث أولًا قبل عكس سند الخزينة."
+    return None
+
+
 @transaction.atomic
 def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
-    """Reverse a standalone base-currency treasury document and synchronize its lifecycle."""
+    """Reverse a standalone treasury document and restore any foreign-currency subledger positions."""
     doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
         "company__base_currency", "branch", "source_account", "destination_account", "journal_entry",
+        "transaction_currency",
     ).get(pk=transaction_id)
     if doc.status != TreasuryTransaction.Status.POSTED:
         raise ValidationError("يمكن عكس مستند خزينة مرحّل فقط.")
@@ -550,25 +572,94 @@ def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
         raise ValidationError("القيد الأصلي غير موجود أو ليس مرحّلًا؛ لا يمكن عكس المستند.")
     if doc.journal_entry.source_type != JournalEntry.Source.MANUAL:
         raise ValidationError("هذه حركة مرتبطة بمستند تشغيلي؛ يجب عكسها من الوحدة الأصلية وليس من الخزينة.")
+    if doc.reversal_journal_entry_id:
+        raise ValidationError("تم عكس مستند الخزينة من قبل.")
     base_code = doc.company.base_currency.code
-    if (doc.source_account.currency_code != base_code
-        or (doc.destination_account_id and doc.destination_account.currency_code != base_code)
-        or doc.transaction_currency_id is not None or doc.transaction_amount is not None
-        or doc.exchange_rate is not None):
-        raise ValidationError("عكس حركات العملات الأجنبية غير متاح في هذه المرحلة حتى تتم معالجة مركز العملة وفروق الصرف بالكامل.")
+    foreign = doc.source_account.currency_code != base_code
+    if (doc.destination_account_id and doc.destination_account.currency_code != doc.source_account.currency_code):
+        raise ValidationError("عملة حساب التحويل لا تطابق عملة الحساب المصدر؛ لا يمكن عكس الحركة بأمان.")
+    if foreign and not doc.posted_at:
+        raise ValidationError("تاريخ ترحيل المستند غير متوفر للتحقق من تسلسل مركز العملة؛ راجع سجل المستند.")
+    if foreign and (
+        not doc.transaction_currency_id or doc.transaction_currency.code != doc.source_account.currency_code
+        or not doc.transaction_amount or not doc.exchange_rate or not doc.carrying_amount
+        or doc.transaction_amount <= 0 or doc.exchange_rate <= 0 or doc.carrying_amount <= 0
+        or doc.amount != _money(doc.transaction_amount * doc.exchange_rate)
+    ):
+        raise ValidationError("بيانات المبلغ الأجنبي أو القيمة الدفترية الأصلية غير مكتملة؛ راجع المستند قبل العكس.")
+    if not foreign and (
+        doc.transaction_currency_id is not None or doc.transaction_amount is not None
+        or doc.exchange_rate is not None or doc.carrying_amount is not None
+    ):
+        raise ValidationError("بيانات العملة الأجنبية لا تتفق مع عملة حساب الخزينة.")
     from hr.models import PayrollPosting
     if PayrollPosting.objects.filter(payment_treasury_transaction_id=doc.pk).exists():
         raise ValidationError("حركة صرف المرتبات مرتبطة بدورة المرتبات؛ عالجها من شاشة المرتبات.")
     from assets.models import FixedAsset
     if FixedAsset.objects.filter(Q(acquisition_treasury_transaction_id=doc.pk) | Q(disposal_treasury_transaction_id=doc.pk)).exists():
         raise ValidationError("حركة اقتناء أو استبعاد أصل ثابت؛ عالجها من دورة الأصول.")
-    from .models import BankStatementLine
-    if BankStatementLine.objects.filter(matched_transaction_id=doc.pk).exists():
+    from .models import BankStatementLine, BankStatementMatchAllocation
+    if (
+        BankStatementLine.objects.filter(matched_transaction_id=doc.pk).exists()
+        or BankStatementMatchAllocation.objects.filter(transaction_id=doc.pk).exists()
+    ):
         raise ValidationError("الحركة مرتبطة بتسوية بنكية؛ فك المطابقة أو عالج التسوية أولًا قبل العكس.")
     if entry_date < doc.transaction_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ مستند الخزينة الأصلي.")
+
+    positions = {}
+    if foreign:
+        account_ids = {doc.source_account_id}
+        if doc.destination_account_id:
+            account_ids.add(doc.destination_account_id)
+        locked_accounts = {
+            account.pk: account
+            for account in TreasuryAccount.objects.select_for_update(of=("self",))
+            .select_related("company__base_currency", "account")
+            .filter(pk__in=sorted(account_ids)).order_by("pk")
+        }
+        blocker = _foreign_treasury_transaction_reversal_blocker(
+            doc, [locked_accounts[key] for key in sorted(account_ids)],
+        )
+        if blocker:
+            raise ValidationError(blocker)
+        positions = {
+            account_id: _foreign_position(locked_accounts[account_id])
+            for account_id in sorted(account_ids)
+        }
+        source_position = positions[doc.source_account_id]
+        amount = doc.transaction_amount
+        carrying = doc.carrying_amount
+        if doc.kind == TreasuryTransaction.Kind.RECEIPT:
+            if source_position.foreign_amount < amount or source_position.carrying_base_amount < carrying:
+                raise ValidationError("تم استخدام جزء من رصيد القبض بعد الترحيل؛ راجع الحركات اللاحقة قبل العكس.")
+            source_position.foreign_amount -= amount
+            source_position.carrying_base_amount -= carrying
+        elif doc.kind == TreasuryTransaction.Kind.PAYMENT:
+            source_position.foreign_amount += amount
+            source_position.carrying_base_amount += carrying
+        else:
+            destination_position = positions[doc.destination_account_id]
+            if (
+                destination_position.foreign_amount < amount
+                or destination_position.carrying_base_amount < carrying
+            ):
+                raise ValidationError("رصيد الحساب المستقبِل تغيّر؛ لا يمكن عكس التحويل دون التسبب في رصيد أجنبي سالب.")
+            source_position.foreign_amount += amount
+            source_position.carrying_base_amount += carrying
+            destination_position.foreign_amount -= amount
+            destination_position.carrying_base_amount -= carrying
+        for position in positions.values():
+            if position.foreign_amount < 0 or position.carrying_base_amount < 0:
+                raise ValidationError("عكس الحركة سيؤدي إلى رصيد أجنبي أو قيمة دفترية سالبة.")
+            if (position.foreign_amount == 0) != (position.carrying_base_amount == 0):
+                raise ValidationError("عكس الحركة سيترك مركز العملة غير متوازن؛ راجع سجل الحركات.")
     from accounting.services import reverse_operational_journal
-    reversal = reverse_operational_journal(doc.journal_entry_id, user, entry_date, expected_source=JournalEntry.Source.MANUAL)
+    reversal = reverse_operational_journal(
+        doc.journal_entry_id, user, entry_date, expected_source=JournalEntry.Source.MANUAL,
+    )
+    for position in positions.values():
+        position.save(update_fields=("foreign_amount", "carrying_base_amount", "updated_at"))
     TreasuryTransaction.objects.filter(pk=doc.pk, status=TreasuryTransaction.Status.POSTED).update(
         status=TreasuryTransaction.Status.REVERSED, reversal_journal_entry=reversal,
         reversed_at=timezone.now(), reversed_by=user,
