@@ -18,6 +18,13 @@ const decimalToUnits = (value: string): bigint | null => {
   if (fraction.length > 4 && /[^0]/.test(fraction.slice(4))) return null;
   return BigInt(whole) * 10000n + BigInt((fraction.slice(0, 4) + "0000").slice(0, 4));
 };
+const decimalToSixUnits = (value: string): bigint | null => {
+  const normalized = value.trim();
+  if (!/^\\d+(?:\\.\\d+)?$/.test(normalized)) return null;
+  const [whole, fraction = ""] = normalized.split(".");
+  if (fraction.length > 6) return null;
+  return BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0"));
+};
 const unitsToDecimal = (value: bigint): string =>
   `${value / 10000n}.${(value % 10000n).toString().padStart(4, "0")}`;
 const roundedShareUnits = (amount: bigint, weight: bigint, totalWeight: bigint): bigint => {
@@ -273,12 +280,13 @@ const loadAging = async () => {
         rows: [{ id: entry.item.id, label: `${entry.receipt.receipt_number} · ${entry.item.product_name}`, share: unitsToDecimal(amount) }],
       };
     }
-    const weights = selected.map(({ item }) => decimalToUnits(
-      line.basis === "quantity" ? item.quantity
-        : line.basis === "value" ? item.cost_amount
-          : line.basis === "weight" ? (Number(item.product_unit_weight) * Number(item.quantity)).toFixed(4)
-            : (Number(item.product_unit_volume) * Number(item.quantity)).toFixed(4),
-    ));
+    const weights = selected.map(({ item }) => {
+      if (line.basis === "quantity") return decimalToUnits(item.quantity);
+      if (line.basis === "value") return decimalToUnits(item.cost_amount);
+      const quantityUnits = decimalToUnits(item.quantity);
+      const unitMeasure = decimalToSixUnits(line.basis === "weight" ? item.product_unit_weight : item.product_unit_volume);
+      return quantityUnits === null || unitMeasure === null ? null : quantityUnits * unitMeasure;
+    });
     if (weights.some((weight) => weight === null || weight <= 0n) || selected.some(({ receipt }) => receipt.movement_status !== "posted")) {
       return { valid: false, total: unitsToDecimal(amount), rows: [] as { id: number; label: string; share: string }[] };
     }
