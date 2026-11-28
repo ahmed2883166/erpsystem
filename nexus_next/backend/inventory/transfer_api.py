@@ -72,7 +72,9 @@ class StockTransferViewSet(viewsets.ModelViewSet):
             Q(destination_warehouse__branch__in=branches)
             | Q(destination_warehouse__branch__isnull=True, company_id__in=default_company_ids)
         )
-        return queryset.filter(source_scope, destination_scope).distinct()
+        # Either participating branch may read the transfer. Dispatch and receive
+        # actions enforce source- and destination-branch permissions separately.
+        return queryset.filter(source_scope | destination_scope).distinct()
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
@@ -80,16 +82,18 @@ class StockTransferViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
         if not has_company_role(self.request.user, company.pk, ("admin", "accountant")):
             raise PermissionDenied("إنشاء التحويل متاح لمدير الشركة والمحاسب فقط.")
+        # The sending branch owns initiation. The receiving branch is allowed
+        # to receive later without requiring membership in the sending branch.
         _check_transfer_warehouse(self.request.user, serializer.validated_data["source_warehouse"], company.pk)
-        _check_transfer_warehouse(self.request.user, serializer.validated_data["destination_warehouse"], company.pk)
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
         transfer = serializer.instance
         if transfer.status != StockTransfer.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل تحويل تم شحنه أو استلامه.")
+        # Only the source branch may edit a draft transfer; serializer validation
+        # still guarantees that both warehouses are active and in this company.
         _check_transfer_warehouse(self.request.user, serializer.validated_data.get("source_warehouse", transfer.source_warehouse), transfer.company_id)
-        _check_transfer_warehouse(self.request.user, serializer.validated_data.get("destination_warehouse", transfer.destination_warehouse), transfer.company_id)
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -103,7 +107,6 @@ class StockTransferViewSet(viewsets.ModelViewSet):
     def dispatch(self, request, pk=None):
         transfer = self.get_object()
         _check_transfer_warehouse(request.user, transfer.source_warehouse, transfer.company_id)
-        _check_transfer_warehouse(request.user, transfer.destination_warehouse, transfer.company_id)
         transfer = dispatch_stock_transfer(transfer.pk, request.user)
         return Response(self.get_serializer(transfer).data, status=status.HTTP_200_OK)
 
@@ -187,4 +190,5 @@ class StockTransferReceiptViewSet(viewsets.ReadOnlyModelViewSet):
             Q(transfer__destination_warehouse__branch__in=branches)
             | Q(transfer__destination_warehouse__branch__isnull=True, transfer__company_id__in=default_company_ids)
         )
-        return queryset.filter(source_scope, destination_scope).distinct()
+        # Both participating branches need visibility into the receipt audit trail.
+        return queryset.filter(source_scope | destination_scope).distinct()
