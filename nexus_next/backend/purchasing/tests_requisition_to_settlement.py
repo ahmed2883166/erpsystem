@@ -11,6 +11,7 @@ from companies.models import (
 )
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
+from customers.models import Customer
 from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
@@ -76,6 +77,9 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.supplier_b = Supplier.objects.create(
             company=self.company, code="REQ-E2E-B", name_ar="المورد ب",
         )
+        self.customer = Customer.objects.create(
+            company=self.company, code="REQ-E2E-CUS", name_ar="عميل دورة التكامل",
+        )
 
         roles = {
             AccountRole.Role.INVENTORY: ("1000", "المخزون", ChartOfAccount.Nature.ASSET),
@@ -84,6 +88,10 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             AccountRole.Role.INTER_BRANCH_CLEARING: ("2190", "تسوية بين الفروع", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED: ("2100", "بضاعة مستلمة غير مفوترة", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.ACCOUNTS_PAYABLE: ("2200", "الموردون", ChartOfAccount.Nature.LIABILITY),
+            AccountRole.Role.ACCOUNTS_RECEIVABLE: ("1200", "العملاء", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.SALES: ("4000", "المبيعات", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.SALES_RETURNS: ("4090", "مردودات المبيعات", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.VAT_OUTPUT: ("2300", "ضريبة مخرجات", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.VAT_INPUT: ("1300", "ضريبة مدخلات", ChartOfAccount.Nature.ASSET),
             AccountRole.Role.OPERATING_EXPENSE: ("6000", "مصروفات تشغيلية", ChartOfAccount.Nature.EXPENSE),
             AccountRole.Role.BANK: ("1100", "البنك", ChartOfAccount.Nature.ASSET),
@@ -379,3 +387,94 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         ):
             totals = entry.lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
+
+        
+        # Continue the same company journey into sales: the purchased and
+        # returned stock must be available for delivery, invoicing and collection.
+        sales_date = return_reversal_date + timedelta(days=1)
+        delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk,
+            "delivery_number": "SALE-E2E-DEL-001",
+            "delivery_date": sales_date.isoformat(),
+            "lines": [{"product": self.product.pk, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+        posted_delivery = self.client.post(
+            f"/api/sales-documents/deliveries/{delivery.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_delivery.status_code, 200, posted_delivery.data)
+
+        sales_invoice_date = sales_date + timedelta(days=1)
+        sales_invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery.data["id"],
+            "invoice_number": "SALE-E2E-INV-001",
+            "invoice_date": sales_invoice_date.isoformat(),
+            "lines": [{
+                "delivery_line": delivery.data["line_items"][0]["id"],
+                "unit_price": "150",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(sales_invoice.status_code, 201, sales_invoice.data)
+        posted_sales_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{sales_invoice.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_sales_invoice.status_code, 200, posted_sales_invoice.data)
+        self.assertEqual(posted_sales_invoice.data["grand_total"], "171.0000")
+
+        receipt_date = sales_invoice_date + timedelta(days=1)
+        customer_receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "invoice": sales_invoice.data["id"],
+            "receipt_number": "SALE-E2E-RC-001",
+            "receipt_date": receipt_date.isoformat(),
+            "method": "bank",
+            "payment_account": self.bank.pk,
+            "amount": "171",
+        }, format="json")
+        self.assertEqual(customer_receipt.status_code, 201, customer_receipt.data)
+        posted_customer_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{customer_receipt.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_customer_receipt.status_code, 200, posted_customer_receipt.data)
+
+        final_stock = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(final_stock.quantity, Decimal("1.0000"))
+        self.assertEqual(final_stock.inventory_value, Decimal("100.0000"))
+
+        final_date = receipt_date
+        integrated_reconciliation = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}"
+            f"&as_of={final_date.isoformat()}",
+        )
+        self.assertEqual(integrated_reconciliation.status_code, 200, integrated_reconciliation.data)
+        integrated_rows = {row["key"]: row for row in integrated_reconciliation.data["rows"]}
+        self.assertEqual(integrated_rows["suppliers"]["status"], "matched", integrated_rows["suppliers"])
+        self.assertEqual(integrated_rows["customers"]["status"], "matched", integrated_rows["customers"])
+        self.assertEqual(Decimal(integrated_rows["suppliers"]["difference"]), Decimal("0"))
+        self.assertEqual(Decimal(integrated_rows["customers"]["difference"]), Decimal("0"))
+
+        trial_balance = self.client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            f"&date_from={self.request_date.isoformat()}&date_to={final_date.isoformat()}",
+        )
+        self.assertEqual(trial_balance.status_code, 200, trial_balance.data)
+        self.assertEqual(trial_balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(trial_balance.data["debit_total"], trial_balance.data["credit_total"])
+
+        income_statement = self.client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={self.company.pk}"
+            f"&date_from={self.request_date.isoformat()}&date_to={final_date.isoformat()}",
+        )
+        self.assertEqual(income_statement.status_code, 200, income_statement.data)
+        self.assertEqual(income_statement.data["revenue_total"], Decimal("150.0000"))
+        self.assertEqual(income_statement.data["cost_of_sales_total"], Decimal("100.0000"))
+        self.assertEqual(income_statement.data["gross_profit"], Decimal("50.0000"))
