@@ -110,7 +110,7 @@ try {
         $createdDatabase = $true
         $databaseAccessSql = "REVOKE ALL ON DATABASE " + (Quote-Identifier $dbName) + " FROM PUBLIC; GRANT CONNECT, TEMPORARY ON DATABASE " + (Quote-Identifier $dbName) + " TO " + (Quote-Identifier $appUser) + ";"
         $null = Invoke-Psql $psql $hostName $port $adminUser "postgres" $databaseAccessSql
-        $schemaAccessSql = "REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
+        $schemaAccessSql = "REVOKE CREATE ON SCHEMA public FROM PUBLIC; GRANT USAGE, CREATE ON SCHEMA public TO " + (Quote-Identifier $appUser) + ";"
         $null = Invoke-Psql $psql $hostName $port $adminUser $dbName $schemaAccessSql
 
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
