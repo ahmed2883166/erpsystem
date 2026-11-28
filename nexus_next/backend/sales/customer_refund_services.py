@@ -74,6 +74,41 @@ def post_customer_refund(refund_id, user):
         or treasury.currency_code != refund.company.base_currency.code
     ):
         raise ValidationError("حساب الخزينة/البنك غير نشط أو لا يطابق الشركة والفرع والعملة.")
+
+    # A customer refund is a cash outflow. Validate funds on the refund date,
+    # then replay later movements so future deposits cannot fund a backdated
+    # refund and later withdrawals cannot create an intermediate overdraft.
+    balance_movements = treasury.account.journal_lines.filter(
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).values("entry_id", "entry__entry_date").annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
+    available_balance = (
+        Decimal("0") if treasury.opening_journal_entry_id
+        else treasury.opening_balance
+    )
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= refund.refund_date:
+            available_balance += change
+        else:
+            later_movements.append(change)
+
+    if available_balance < refund.amount:
+        raise ValidationError(
+            f"رصيد الخزينة/البنك في تاريخ المردود ({available_balance}) أقل من مبلغ المردود ({refund.amount})."
+        )
+    for change in later_movements:
+        available_balance += change
+        if available_balance < refund.amount:
+            raise ValidationError(
+                "لا يمكن ترحيل مردود بتاريخ سابق؛ سيؤدي إلى رصيد خزينة/بنك سالب بعد حركة لاحقة مسجلة."
+            )
+
     receivable = get_account_for_role(refund.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
     if receivable.pk == treasury.account_id:
         raise ValidationError("حساب العملاء يجب أن يختلف عن حساب الخزينة/البنك.")
