@@ -1,6 +1,6 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param()
+param([string]$AppRoot)
 
 $ErrorActionPreference = "Stop"
 $ToolkitRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -24,7 +24,19 @@ function Find-AppRoot {
         }
         $current = $current.Parent
     }
-    throw "لم أجد مجلد Admrail. يجب أن تكون الأداة داخل مجلد البرنامج أو أحد مجلداته الفرعية."
+    Write-Host "الأداة تعمل من وسيط مستقل. حدد مجلد Admrail الموجود على سيرفر العميل." -ForegroundColor Yellow
+    $selected = (Read-Host "مسار مجلد Admrail الذي يحتوي على backend\manage.py").Trim().Trim('"')
+    if (-not $selected -or -not (Test-Path -LiteralPath $selected -PathType Container)) {
+        throw "لم يتم تحديد مجلد Admrail صالح."
+    }
+    $manage = Join-Path $selected "backend\manage.py"
+    $python = Join-Path $selected "runtime\python.exe"
+    $venvPython = Join-Path $selected "backend\.venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $manage -PathType Leaf) -or
+        (-not (Test-Path -LiteralPath $python -PathType Leaf) -and -not (Test-Path -LiteralPath $venvPython -PathType Leaf))) {
+        throw "المسار المحدد لا يحتوي على backend\manage.py وبيئة Python صالحة."
+    }
+    return (Resolve-Path -LiteralPath $selected).Path
 }
 function Get-AppPython {
     $candidate = Join-Path $script:AppRoot "runtime\python.exe"
@@ -67,6 +79,13 @@ function Test-OwnerAuthentication {
     }
     $record = Get-Content -LiteralPath $authPath -Raw | ConvertFrom-Json
     if ($record.version -ne 1 -or -not $record.salt -or -not $record.hash) { throw "ملف مصادقة المالك تالف." }
+    $lockPath = Join-Path $ToolkitRoot ".owner-lockout.json"
+    if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+        $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+        if ($lock.locked_until -and ([datetime]::Parse($lock.locked_until) -gt (Get-Date))) {
+            throw "تم إيقاف محاولات الدخول مؤقتًا حتى $($lock.locked_until)."
+        }
+    }
     $secure = Read-Host "أدخل PIN مالك النظام" -AsSecureString
     $ptr = [IntPtr]::Zero
     try {
@@ -78,7 +97,19 @@ function Test-OwnerAuthentication {
         if ($actualBytes.Length -ne $expectedBytes.Length) { throw "PIN غير صحيح." }
         $diff = 0
         for ($i = 0; $i -lt $actualBytes.Length; $i++) { $diff = $diff -bor ($actualBytes[$i] -bxor $expectedBytes[$i]) }
-        if ($diff -ne 0) { throw "PIN غير صحيح." }
+        if ($diff -ne 0) {
+            $attempts = 1
+            if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+                try { $prior = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json; $attempts = [int]$prior.failures + 1 } catch { $attempts = 1 }
+            }
+            $delayMinutes = [Math]::Min(60, [Math]::Pow(2, [Math]::Min(5, [Math]::Max(0, $attempts - 3))))
+            $lock = [ordered]@{ failures = $attempts; locked_until = if ($attempts -ge 3) { (Get-Date).AddMinutes($delayMinutes).ToString("o") } else { $null } }
+            $lock | ConvertTo-Json | Set-Content -LiteralPath $lockPath -Encoding ASCII
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            & (Join-Path $env:SystemRoot "System32\icacls.exe") $lockPath /inheritance:r /grant:r "$($identity):(R,W)" "SYSTEM:(R,W)" | Out-Null
+            throw "PIN غير صحيح. عدد المحاولات الفاشلة: $attempts."
+        }
+        if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath -Force }
         Write-Log "Owner authenticated."
     } finally {
         if ($ptr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -91,13 +122,17 @@ function Get-WindowsPowerShellPath {
     return $candidate
 }
 function Get-PostgresTools {
-    $root = Join-Path $env:ProgramFiles "PostgreSQL"
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles "PostgreSQL") }
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 "PostgreSQL") }
     $found = @{}
-    foreach ($version in @("16","17","18","15","14")) {
-        $bin = Join-Path $root ($version + "\bin")
-        foreach ($name in @("psql.exe","pg_dump.exe","pg_restore.exe")) {
-            $path = Join-Path $bin $name
-            if ((Test-Path -LiteralPath $path -PathType Leaf) -and -not $found.ContainsKey($name)) { $found[$name] = $path }
+    foreach ($root in $roots) {
+        foreach ($version in @("18","17","16","15","14")) {
+            $bin = Join-Path $root ($version + "\bin")
+            foreach ($name in @("psql.exe","pg_dump.exe","pg_restore.exe")) {
+                $path = Join-Path $bin $name
+                if ((Test-Path -LiteralPath $path -PathType Leaf) -and -not $found.ContainsKey($name)) { $found[$name] = $path }
+            }
         }
     }
     return $found
@@ -124,7 +159,8 @@ function Show-Diagnostics {
     $python = $null
     try { $python = Get-AppPython } catch { }
     $pg = Get-PostgresTools
-    $service = Get-Service -Name "postgresql-x64-16" -ErrorAction SilentlyContinue
+    $services = @(Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^postgresql-x64-' -or $_.DisplayName -match 'PostgreSQL' } | Sort-Object Name)
+    $serviceSummary = if ($services.Count) { ($services | ForEach-Object { "$($_.Name)=$($_.Status)" }) -join "; " } else { "not detected" }
     $envFile = Join-Path $script:AppRoot "backend\.env"
     $lines = @(
         "Admrail Owner Toolkit diagnostics",
@@ -136,7 +172,7 @@ function Show-Diagnostics {
         "Backend present: $(Test-Path (Join-Path $script:AppRoot 'backend\manage.py'))",
         "Python runtime: $([bool]$python)",
         "Environment file present: $(Test-Path -LiteralPath $envFile)",
-        "PostgreSQL service: $(if ($service) { $service.Status } else { 'not detected by standard service name' })",
+        "PostgreSQL services: $serviceSummary",
         "psql available: $($pg.ContainsKey('psql.exe'))",
         "pg_dump available: $($pg.ContainsKey('pg_dump.exe'))",
         "pg_restore available: $($pg.ContainsKey('pg_restore.exe'))",
@@ -215,7 +251,17 @@ function Invoke-DatabaseManager {
     Write-Log "Owner database manager closed."
 }
 try {
-    $script:AppRoot = Find-AppRoot
+    if ($AppRoot) {
+        $resolved = (Resolve-Path -LiteralPath $AppRoot -ErrorAction Stop).Path
+        $manage = Join-Path $resolved "backend\manage.py"
+        $pythonA = Join-Path $resolved "runtime\python.exe"
+        $pythonB = Join-Path $resolved "backend\.venv\Scripts\python.exe"
+        if (-not (Test-Path -LiteralPath $manage -PathType Leaf) -or
+            (-not (Test-Path -LiteralPath $pythonA -PathType Leaf) -and -not (Test-Path -LiteralPath $pythonB -PathType Leaf))) {
+            throw "المسار المحدد في AppRoot غير صالح."
+        }
+        $script:AppRoot = $resolved
+    } else { $script:AppRoot = Find-AppRoot }
     Test-OwnerAuthentication
     Write-Log "Toolkit started. AppRoot=$script:AppRoot"
     $script:ExitRequested = $false
