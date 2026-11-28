@@ -97,6 +97,23 @@ class CustomExcelExportApiTests(APITestCase):
         self.assertEqual(rows[1], ("عميل ظاهر", "C-001"))
         self.assertEqual(len(rows), 2)
 
+    def test_export_can_select_five_columns_from_a_larger_field_catalog(self):
+        self.assertGreaterEqual(len(EXPORTS["employees"]["fields"]), 20)
+        response = self.client.get(
+            "/api/exports/custom-excel/",
+            {"resource": "customers", "company": self.company.pk,
+             "fields": "name_ar,code,tax_number,phone,credit_limit"},
+        )
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content), read_only=True, data_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertEqual(len(rows[0]), 5)
+        self.assertEqual(rows[0], tuple(
+            _field_label(Customer, name)
+            for name in ("name_ar", "code", "tax_number", "phone", "credit_limit")
+        ))
+        self.assertEqual(rows[1][:4], ("عميل ظاهر", "C-001", "", ""))
+
     def test_unknown_or_unapproved_fields_are_rejected(self):
         response = self.client.get(
             "/api/exports/custom-excel/",
