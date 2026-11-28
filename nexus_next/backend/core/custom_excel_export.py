@@ -51,7 +51,7 @@ EXPORTS = {
         "label": "الموردون",
         "fields": ("code", "supplier_type", "name_ar", "name_en", "tax_number", "phone",
                    "mobile", "email", "address", "credit_limit", "payment_terms_days",
-                   "is_active", "created_at"),
+                   "notes", "is_active", "created_at", "updated_at"),
     },
     "bank": {
         "model": TreasuryAccount,
@@ -74,7 +74,7 @@ EXPORTS = {
                    "email", "phone", "branch", "department", "position", "contract_type",
                    "hire_date", "contract_end_date", "termination_date", "status",
                    "basic_salary", "currency", "payment_method", "bank_name", "bank_account",
-                   "cost_center", "created_at"),
+                   "cost_center", "manager", "notes", "created_at", "updated_at"),
     },
 }
 
