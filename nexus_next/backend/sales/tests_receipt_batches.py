@@ -307,6 +307,14 @@ class CustomerReceiptBatchTests(APITestCase):
         refund_reversal = reverse_operational_journal(
             refund_entry.pk, self.user, date(2026, 3, 14), JournalEntry.Source.SALES,
         )
+        reversal_movement = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            source_account=treasury_account, counter_account=receivables,
+            kind=TreasuryTransaction.Kind.RECEIPT, status=TreasuryTransaction.Status.POSTED,
+            document_number="AUTO-CUSTOMER-REFUND-REV-001", transaction_date=date(2026, 3, 14),
+            amount=Decimal("25"), description="عكس رد مبلغ للعميل",
+            journal_entry=refund_reversal, created_by=self.user,
+        )
         TreasuryTransaction.objects.filter(pk=refund_movement.pk).update(
             status=TreasuryTransaction.Status.REVERSED,
             reversal_journal_entry=refund_reversal,
@@ -314,7 +322,10 @@ class CustomerReceiptBatchTests(APITestCase):
         refund.status = CustomerRefund.Status.REVERSED
         refund.reversal_date = date(2026, 3, 14)
         refund.reversal_journal_entry = refund_reversal
-        refund.save(update_fields=("status", "reversal_date", "reversal_journal_entry"))
+        refund.reversal_treasury_transaction = reversal_movement
+        refund.save(update_fields=(
+            "status", "reversal_date", "reversal_journal_entry", "reversal_treasury_transaction",
+        ))
 
         statement_after_reversal = self.client.get(
             f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
@@ -330,6 +341,15 @@ class CustomerReceiptBatchTests(APITestCase):
         )
         self.assertEqual(aging_after_reversal.status_code, 200, aging_after_reversal.data)
         self.assertEqual(aging_after_reversal.data["totals"]["unallocated_advances"], "100.0000")
+        reconciliation = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-14"
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        customer_reconciliation = next(
+            row for row in reconciliation.data["rows"] if row["key"] == "customers"
+        )
+        self.assertEqual(customer_reconciliation["status"], "matched", customer_reconciliation)
+        self.assertEqual(Decimal(customer_reconciliation["difference"]), Decimal("0"))
 
         reversed_batch = self.client.post(
             f"/api/sales-documents/receipt-batches/{batch_response.data['id']}/reverse/",
