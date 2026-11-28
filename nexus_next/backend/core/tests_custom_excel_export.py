@@ -112,7 +112,8 @@ class CustomExcelExportApiTests(APITestCase):
             _field_label(Customer, name)
             for name in ("name_ar", "code", "tax_number", "phone", "credit_limit")
         ))
-        self.assertEqual(rows[1][:4], ("عميل ظاهر", "C-001", "", ""))
+        # openpyxl represents truly empty XLSX cells as None when reading values_only.
+        self.assertEqual(rows[1][:4], ("عميل ظاهر", "C-001", None, None))
 
     def test_unknown_or_unapproved_fields_are_rejected(self):
         response = self.client.get(
