@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, salesApi, type Branch, type Customer, type CustomerReceiptBatch, type SalesInvoice, type TreasuryAccount } from "./api";
+import { api, salesApi, type Branch, type Customer, type CustomerReceiptBatch, type CustomerRefund, type SalesInvoice, type TreasuryAccount } from "./api";
 import { formatMoney } from "./formatters";
 
 type AllocationDraft = { invoice:string; amount:string };
@@ -23,6 +23,8 @@ export default function CustomerReceiptBatchesPanel({
 }:Props) {
   const [branches,setBranches] = useState<Branch[]>([]);
   const [batches,setBatches] = useState<CustomerReceiptBatch[]>([]);
+  const [refunds,setRefunds] = useState<CustomerRefund[]>([]);
+  const [refundForm,setRefundForm] = useState<{batchId:number;refund_number:string;refund_date:string;amount:string;treasury_account:string}|null>(null);
   const [form,setForm] = useState({
     customer:"",branch:"",receipt_number:"",receipt_date:today(),
     method:"bank" as "cash"|"bank",payment_account:"",amount:"",reference:"",
@@ -34,16 +36,16 @@ export default function CustomerReceiptBatchesPanel({
 
   const load = async () => {
     if(!companyId)return;
-    const [batchRows,branchRows] = await Promise.all([
-      salesApi.receiptBatches(companyId),api.branches(companyId),
+    const [batchRows,branchRows,refundRows] = await Promise.all([
+      salesApi.receiptBatches(companyId),api.branches(companyId),salesApi.refunds(companyId),
     ]);
-    setBatches(batchRows);setBranches(branchRows);
+    setBatches(batchRows);setBranches(branchRows);setRefunds(refundRows);
   };
   useEffect(()=>{
     let active=true;
     if(!companyId){setBatches([]);setBranches([]);return;}
-    Promise.all([salesApi.receiptBatches(companyId),api.branches(companyId)]).then(([batchRows,branchRows])=>{
-      if(active){setBatches(batchRows);setBranches(branchRows);}
+    Promise.all([salesApi.receiptBatches(companyId),api.branches(companyId),salesApi.refunds(companyId)]).then(([batchRows,branchRows,refundRows])=>{
+      if(active){setBatches(batchRows);setBranches(branchRows);setRefunds(refundRows);}
     }).catch(reason=>{if(active)setError(reason instanceof Error?reason.message:"تعذر تحميل سندات القبض المجمعة.");});
     return ()=>{active=false;};
   },[companyId]);
@@ -104,6 +106,37 @@ export default function CustomerReceiptBatchesPanel({
     finally{setBusy(false);}
   };
 
+  const createRefund = async (event:FormEvent) => {
+    event.preventDefault();
+    if(!companyId||!refundForm)return;
+    const batch=batches.find(row=>row.id===refundForm.batchId);
+    if(!batch)return;
+    setBusy(true);setError("");
+    try{
+      await salesApi.createRefund({
+        company:companyId,customer:batch.customer,branch:batch.branch,
+        source_receipt_batch:batch.id,refund_number:refundForm.refund_number,
+        refund_date:refundForm.refund_date,amount:refundForm.amount,
+        treasury_account:Number(refundForm.treasury_account),
+      });
+      setRefundForm(null);await load();await onRefresh();
+    }catch(reason){setError(reason instanceof Error?reason.message:"تعذر إنشاء مردود العميل.");}
+    finally{setBusy(false);}
+  };
+  const postRefund = async (refund:CustomerRefund) => {
+    setBusy(true);setError("");
+    try{await salesApi.postRefund(refund.id);await load();await onRefresh();}
+    catch(reason){setError(reason instanceof Error?reason.message:"تعذر ترحيل مردود العميل.");}
+    finally{setBusy(false);}
+  };
+  const reverseRefund = async (refund:CustomerRefund) => {
+    if(!window.confirm("سيتم عكس قيد مردود العميل وإعادة المبلغ إلى رصيده المقدم. هل تريد المتابعة؟"))return;
+    setBusy(true);setError("");
+    try{await salesApi.reverseRefund(refund.id);await load();await onRefresh();}
+    catch(reason){setError(reason instanceof Error?reason.message:"تعذر عكس مردود العميل.");}
+    finally{setBusy(false);}
+  };
+
   return <section className="work-panel">
     <div className="work-panel-head"><div><h2>التحصيل المجمع والدفعات المقدمة</h2><p>سند واحد يوزع على عدة فواتير، والجزء غير المخصص يبقى رصيدًا مقدمًا للعميل.</p></div></div>
     {!companyId&&<div className="table-empty">اختر شركة لعرض التحصيلات.</div>}
@@ -128,6 +161,18 @@ export default function CustomerReceiptBatchesPanel({
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy||!form.customer||!form.branch||!form.amount}>{busy?"جارٍ الحفظ…":"حفظ سند القبض كمسودة"}</button></div>
     </form>}
     {error&&<div className="error-banner">{error}</div>}
+
+    {refundForm&&<form className="inventory-form" onSubmit={createRefund}>
+      <h3 className="inventory-wide">مردود دفعة مقدمة · {batches.find(row=>row.id===refundForm.batchId)?.receipt_number}</h3>
+      <label>رقم المردود<input required maxLength={40} value={refundForm.refund_number} onChange={event=>setRefundForm(old=>old?{...old,refund_number:event.target.value}:old)}/></label>
+      <label>تاريخ المردود<input required type="date" value={refundForm.refund_date} min={batches.find(row=>row.id===refundForm.batchId)?.receipt_date} onChange={event=>setRefundForm(old=>old?{...old,refund_date:event.target.value}:old)}/></label>
+      <label>المبلغ<input required type="number" min="0.0001" max={batches.find(row=>row.id===refundForm.batchId)?.unallocated_amount||"0"} step="0.0001" value={refundForm.amount} onChange={event=>setRefundForm(old=>old?{...old,amount:event.target.value}:old)}/></label>
+      <label>حساب الصرف<select required value={refundForm.treasury_account} onChange={event=>setRefundForm(old=>old?{...old,treasury_account:event.target.value}:old)}><option value="">اختر الخزينة / البنك</option>{treasuryAccounts.filter(row=>row.is_active&&(!row.branch||row.branch===batches.find(item=>item.id===refundForm.batchId)?.branch)).map(row=><option key={row.id} value={row.id}>{row.code} - {row.name_ar} ({row.kind==="cash"?"خزينة":"بنك"})</option>)}</select></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!refundForm.treasury_account||Number(refundForm.amount)<=0}>حفظ مردود العميل كمسودة</button><button type="button" className="subtle-button" onClick={()=>setRefundForm(null)}>إلغاء</button></div>
+    </form>}
+    <div className="data-table-wrap"><table><thead><tr><th>رقم المردود</th><th>العميل</th><th>سند القبض الأصلي</th><th>التاريخ</th><th>المبلغ</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>
+      {refunds.map(refund=><tr key={refund.id}><td className="code-cell">{refund.refund_number}</td><td>{refund.customer_name}</td><td>{refund.source_receipt_number}</td><td>{refund.refund_date}</td><td>{money(refund.amount)}</td><td>{refund.status==="reversed"?"معكوس":refund.status==="posted"?"مرحّل":"مسودة"}</td><td>{refund.status==="reversed"?refund.reversal_journal_number||"—":refund.journal_number||"—"}</td><td><div className="table-actions">{refund.status==="draft"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void postRefund(refund)}>ترحيل</button>}{refund.status==="posted"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void reverseRefund(refund)}>عكس</button>}</div></td></tr>)}
+    </tbody></table>{!refunds.length&&<div className="table-empty">لا توجد مردودات دفعات مقدمة.</div>}</div>
     {pendingAllocation&&<form className="inventory-form" onSubmit={allocateAdvance}>
       <h3 className="inventory-wide">تخصيص دفعة مقدمة · {batches.find(row=>row.id===pendingAllocation.batchId)?.receipt_number}</h3>
       <label>الفاتورة<select required value={pendingAllocation.invoice} onChange={event=>setPendingAllocation(old=>old?{...old,invoice:event.target.value}:old)}><option value="">اختر فاتورة مستحقة</option>{invoices.filter(invoice=>invoice.customer===batches.find(row=>row.id===pendingAllocation.batchId)?.customer&&invoice.status==="posted"&&!invoice.transaction_currency&&Number(invoice.balance_due||0)>0).map(invoice=><option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · متبقي {money(invoice.balance_due)}</option>)}</select></label>
@@ -144,7 +189,7 @@ export default function CustomerReceiptBatchesPanel({
         <td><div className="table-actions">
           <button type="button" className="subtle-button" onClick={()=>onPrint(batch)}>معاينة / طباعة</button>
           {batch.status==="draft"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void postBatch(batch)}>ترحيل</button>}
-          {batch.status==="posted"&&<><button type="button" className="subtle-button" disabled={busy||Number(batch.unallocated_amount)<=0} onClick={()=>setPendingAllocation({batchId:batch.id,invoice:"",amount:batch.unallocated_amount,allocation_date:today()})}>تخصيص دفعة</button><button type="button" className="subtle-button" disabled={busy} onClick={()=>void reverseBatch(batch)}>عكس</button></>}
+          {batch.status==="posted"&&<><button type="button" className="subtle-button" disabled={busy||Number(batch.unallocated_amount)<=0} onClick={()=>setPendingAllocation({batchId:batch.id,invoice:"",amount:batch.unallocated_amount,allocation_date:today()})}>تخصيص دفعة</button><button type="button" className="subtle-button" disabled={busy||Number(batch.unallocated_amount)<=0} onClick={()=>setRefundForm({batchId:batch.id,refund_number:"",refund_date:today(),amount:batch.unallocated_amount,treasury_account:""})}>رد مبلغ</button><button type="button" className="subtle-button" disabled={busy} onClick={()=>void reverseBatch(batch)}>عكس</button></>}
         </div></td>
       </tr>)}
     </tbody></table>{!batches.length&&<div className="table-empty">لا توجد سندات قبض مجمعة.</div>}</div>
