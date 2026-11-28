@@ -202,13 +202,37 @@ def post_treasury_transaction(transaction_id, user=None):
         carrying_amount = doc.amount
         fx_difference = Decimal("0")
         doc.carrying_amount = None
-        totals = source.account.journal_lines.filter(
-            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED)
-        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        opening_base = Decimal("0") if source.opening_journal_entry_id else source.opening_balance
-        available = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
-        if doc.kind in (TreasuryTransaction.Kind.PAYMENT, TreasuryTransaction.Kind.TRANSFER) and available < doc.amount:
-            raise ValidationError("الرصيد المتاح غير كافٍ لتنفيذ الحركة؛ تم إيقاف الترحيل لمنع الرصيد السالب.")
+        if doc.kind in (TreasuryTransaction.Kind.PAYMENT, TreasuryTransaction.Kind.TRANSFER):
+            balance_movements = source.account.journal_lines.filter(
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED)
+            ).values("entry_id", "entry__entry_date").annotate(
+                debit=Sum("debit"), credit=Sum("credit"),
+            ).order_by("entry__entry_date", "entry_id")
+            available = (
+                Decimal("0") if source.opening_journal_entry_id
+                else source.opening_balance
+            )
+            later_movements = []
+            for movement in balance_movements:
+                change = (
+                    (movement["debit"] or Decimal("0"))
+                    - (movement["credit"] or Decimal("0"))
+                )
+                if movement["entry__entry_date"] <= doc.transaction_date:
+                    available += change
+                else:
+                    later_movements.append(change)
+
+            if available < doc.amount:
+                raise ValidationError(
+                    f"الرصيد المتاح في تاريخ الحركة ({available}) أقل من مبلغ الحركة ({doc.amount})."
+                )
+            for change in later_movements:
+                available += change
+                if available < doc.amount:
+                    raise ValidationError(
+                        "لا يمكن ترحيل حركة بتاريخ سابق؛ ستؤدي إلى رصيد خزينة/بنك سالب بعد حركة لاحقة مسجلة."
+                    )
 
     from assets.models import FixedAsset
     asset_acquisition = FixedAsset.objects.filter(
