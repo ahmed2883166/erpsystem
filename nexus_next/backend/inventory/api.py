@@ -412,6 +412,42 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         rows = queryset.order_by("-movement_date", "-created_at", "-id")[:limit]
         return Response(self.get_serializer(rows, many=True).data)
 
+    @action(detail=False, methods=("get",), url_path="pending")
+    def pending(self, request):
+        """List unposted stock movements for operational follow-up."""
+        company_id = request.query_params.get("company")
+        if not company_id:
+            raise ValidationError({"company": "حدد الشركة لعرض الحركات المعلقة."})
+        try:
+            company_id = int(company_id)
+            limit = max(1, min(int(request.query_params.get("limit", "200")), 500))
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "معرّف الشركة أو عدد الحركات غير صحيح."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        queryset = self.filter_queryset(
+            self.get_queryset().filter(company_id=company_id, status=StockMovement.Status.DRAFT)
+        )
+        warehouse_id = request.query_params.get("warehouse")
+        if warehouse_id:
+            try:
+                warehouse_id = int(warehouse_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"warehouse": "معرّف المخزن غير صحيح."}) from None
+            warehouse = Warehouse.objects.filter(pk=warehouse_id, company_id=company_id).first()
+            if warehouse is None or not _can_access_warehouse(request.user, warehouse):
+                raise NotFound("المخزن غير موجود أو غير متاح.")
+            queryset = queryset.filter(
+                Q(source_warehouse_id=warehouse_id) | Q(destination_warehouse_id=warehouse_id)
+            )
+        total = queryset.count()
+        rows = queryset.order_by("movement_date", "created_at", "id")[:limit]
+        return Response({
+            "count": total,
+            "truncated": total > limit,
+            "results": self.get_serializer(rows, many=True).data,
+        })
+
     @action(detail=False, methods=("get",), url_path="stock-card")
     def stock_card(self, request):
         """إعداد بطاقة الصنف بترقيم صفحات وحساب الأرصدة داخل قاعدة البيانات."""
@@ -1345,4 +1381,134 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "is_reconciled": is_reconciled,
             "reconciliation_status": "matched" if is_reconciled else "difference",
             "basis": "current_stock_snapshot_vs_posted_inventory_account_balance",
+        })
+    
+    @action(detail=False, methods=("get",), url_path="reorder-suggestions")
+    def reorder_suggestions(self, request):
+        """Suggest replenishment using on-hand, open sales commitments and open purchase orders."""
+        company_id = request.query_params.get("company")
+        if not company_id:
+            raise ValidationError({"company": "حدد الشركة لاقتراح كميات الشراء."})
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "معرّف الشركة غير صحيح."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        settings = WarehouseProductSetting.objects.filter(
+            warehouse__company_id=company_id, warehouse__is_active=True,
+            product__product_type=Product.ProductType.GOODS, product__is_active=True,
+            is_active=True,
+        ).select_related("product", "warehouse", "warehouse__branch")
+        if not (request.user.is_superuser and not is_platform_owner(request.user)):
+            branches = accessible_branches(request.user)
+            defaults = _default_branch_company_ids(
+                request.user, accessible_companies(request.user).filter(pk=company_id),
+            )
+            settings = settings.filter(
+                Q(warehouse__branch__in=branches)
+                | Q(warehouse__branch__isnull=True, warehouse__company_id__in=defaults)
+            )
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صحيح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            settings = settings.filter(
+                Q(warehouse__branch_id=branch_id)
+                | (Q(warehouse__branch__isnull=True) if _default_branch(company_id).pk == branch_id else Q(pk__in=[]))
+            )
+
+        from sales.models import SalesOrder, SalesOrderLine
+        from purchasing.models import PurchaseOrder, PurchaseOrderLine
+
+        warehouse_ids = list(settings.values_list("warehouse_id", flat=True).distinct())
+        product_ids = list(settings.values_list("product_id", flat=True).distinct())
+        on_hand_rows = StockBalance.objects.filter(
+            warehouse_id__in=warehouse_ids, product_id__in=product_ids,
+        ).values("warehouse_id", "product_id").annotate(quantity=Sum("quantity"))
+        on_hand = {
+            (row["warehouse_id"], row["product_id"]): row["quantity"] or Decimal("0")
+            for row in on_hand_rows
+        }
+
+        sales_lines = SalesOrderLine.objects.filter(
+            order__warehouse_id__in=warehouse_ids,
+            order__status__in=(SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED),
+            product_id__in=product_ids,
+        ).annotate(
+            delivered_quantity=Coalesce(
+                Sum(
+                    "delivery_allocations__quantity",
+                    filter=Q(delivery_allocations__delivery__stock_movement__status=StockMovement.Status.POSTED),
+                ),
+                Value(Decimal("0")),
+                output_field=DecimalField(max_digits=18, decimal_places=4),
+            )
+        ).values("order__warehouse_id", "product_id", "quantity", "delivered_quantity")
+        reserved = {}
+        for row in sales_lines.iterator(chunk_size=1000):
+            remaining = max(row["quantity"] - row["delivered_quantity"], Decimal("0"))
+            key = (row["order__warehouse_id"], row["product_id"])
+            reserved[key] = reserved.get(key, Decimal("0")) + remaining
+
+        purchase_lines = PurchaseOrderLine.objects.filter(
+            order__warehouse_id__in=warehouse_ids,
+            order__status__in=(PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED),
+            product_id__in=product_ids,
+        ).values("order__warehouse_id", "product_id").annotate(
+            remaining=Sum(F("quantity") - F("received_quantity")),
+        )
+        on_order = {
+            (row["order__warehouse_id"], row["product_id"]): max(row["remaining"] or Decimal("0"), Decimal("0"))
+            for row in purchase_lines
+        }
+
+        latest_movement = StockMovementLine.objects.filter(
+            product_id=OuterRef("product_id"),
+            movement__status=StockMovement.Status.POSTED,
+        ).filter(
+            Q(movement__source_warehouse_id=OuterRef("warehouse_id"))
+            | Q(movement__destination_warehouse_id=OuterRef("warehouse_id"))
+        ).order_by("-movement__posted_at", "-movement_id", "-id").values("movement__movement_date")[:1]
+        settings = settings.annotate(last_movement=Subquery(latest_movement)).order_by(
+            "warehouse__code", "product__code",
+        )
+        today = timezone.localdate()
+        rows = []
+        total = settings.count()
+        for setting in settings[:5000]:
+            key = (setting.warehouse_id, setting.product_id)
+            quantity = on_hand.get(key, Decimal("0"))
+            reserved_quantity = reserved.get(key, Decimal("0"))
+            expected_quantity = on_order.get(key, Decimal("0"))
+            available = quantity - reserved_quantity
+            projected = available + expected_quantity
+            minimum = setting.min_stock
+            suggested = max(minimum - projected, Decimal("0"))
+            age_days = max((today - setting.last_movement).days, 0) if setting.last_movement else None
+            stock_status = (
+                "sold" if quantity <= 0 else
+                "reorder" if projected < minimum else
+                "stagnant" if age_days is not None and age_days > 180 else "available"
+            )
+            rows.append({
+                "product": setting.product_id, "product_code": setting.product.code,
+                "product_name": setting.product.name_ar, "warehouse": setting.warehouse_id,
+                "warehouse_name": setting.warehouse.name_ar,
+                "on_hand": str(quantity), "reserved": str(reserved_quantity),
+                "available": str(available), "on_order": str(expected_quantity),
+                "projected_available": str(projected), "reorder_point": str(minimum),
+                "suggested_purchase_quantity": str(suggested),
+                "last_movement": setting.last_movement.isoformat() if setting.last_movement else None,
+                "age_days": age_days, "stock_status": stock_status,
+            })
+        return Response({
+            "company": company_id, "as_of": today.isoformat(),
+            "count": total, "truncated": total > 5000, "rows": rows,
+            "basis": "on_hand_minus_open_sales_orders_plus_open_purchase_orders",
         })
