@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from accounting.models import FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
-from accounting.fx_subledger_services import revalue_fx_invoice
+from accounting.fx_subledger_services import open_fx_invoice_balances, revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 from inventory.models import Product, StockMovement
@@ -875,7 +875,17 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             batch_paid_as_of = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
             paid_as_of += batch_paid_as_of
             returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
-            balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
+            fx_revaluation_adjustment = Decimal("0")
+            if invoice.transaction_currency_id:
+                _, _, carrying_balance = open_fx_invoice_balances(
+                    invoice, direction="receivable", as_of=as_of,
+                )
+                balance_due = max(carrying_balance, Decimal("0"))
+                fx_revaluation_adjustment = (
+                    balance_due - max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
+                )
+            else:
+                balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:
                 continue
             due_date = invoice.invoice_date + timedelta(days=invoice.customer.payment_terms_days)
@@ -907,6 +917,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "grand_total": str(invoice.grand_total),
                 "paid_as_of": str(paid_as_of),
                 "returned_as_of": str(returned_as_of),
+                "fx_revaluation_adjustment": str(fx_revaluation_adjustment),
                 "balance_due": str(balance_due),
             })
             totals[bucket] += balance_due
