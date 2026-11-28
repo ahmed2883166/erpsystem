@@ -37,7 +37,8 @@ foreach ($path in $psFiles) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
     $tokens = $null
     $parseErrors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
+    $source = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
+    [void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
     Assert-True ($parseErrors.Count -eq 0) ("PowerShell parse errors in {0}: {1}" -f $path, (($parseErrors | ForEach-Object { $_.Message }) -join "; "))
 }
 
