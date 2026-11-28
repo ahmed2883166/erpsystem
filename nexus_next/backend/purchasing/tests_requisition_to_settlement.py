@@ -302,12 +302,14 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         refund_movement = TreasuryTransaction.objects.get(
             journal_entry_id=posted_refund.data["journal_entry"],
         )
+        # Treasury mirrors keep one source movement and link its reversal journal;
+        # they do not create a second standalone cash movement for the reversal.
         self.assertEqual(refund_movement.status, TreasuryTransaction.Status.REVERSED)
-        refund_reversal_movement = TreasuryTransaction.objects.get(
-            reversal_journal_entry_id=reversed_refund.data["reversal_journal_entry"],
+        self.assertEqual(
+            refund_movement.reversal_journal_entry_id,
+            reversed_refund.data["reversal_journal_entry"],
         )
-        self.assertEqual(refund_reversal_movement.status, TreasuryTransaction.Status.POSTED)
-        self.assertEqual(refund_reversal_movement.kind, TreasuryTransaction.Kind.PAYMENT)
+        self.assertEqual(refund_movement.kind, TreasuryTransaction.Kind.RECEIPT)
 
         return_reversal_date = refund_reversal_date + timedelta(days=1)
         reversed_return = self.client.post(
