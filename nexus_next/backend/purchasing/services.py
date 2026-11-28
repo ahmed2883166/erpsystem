@@ -1505,6 +1505,10 @@ def _allocate_landed_cost_to_stock(allocation):
             StockMovement.MovementType.SALES_RETURN_REVERSAL,
         ):
             category = "cogs"
+        elif movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN:
+            # Landed cost on goods already returned to the supplier is nonrecoverable
+            # and remains an expense; it must not be left in inventory or COGS.
+            category = "loss"
         elif (
             movement.movement_type == StockMovement.MovementType.ADJUSTMENT
             and movement_line.adjustment_direction == "out"
