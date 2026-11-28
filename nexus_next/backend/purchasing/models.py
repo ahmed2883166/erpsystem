@@ -1206,6 +1206,10 @@ class BranchPurchasePolicy(models.Model):
         verbose_name = "سياسة شراء فرع"
         verbose_name_plural = "سياسات شراء الفروع"
 
+    @property
+    def company_id(self):
+        return self.branch.company_id
+
     def __str__(self):
         return f"{self.branch} - {'مسموح' if self.purchase_enabled else 'موقوف'}"
 
