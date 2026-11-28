@@ -1240,3 +1240,106 @@ class InventoryApiTests(APITestCase):
             StockMovement.Status.DRAFT,
         )
         self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=warehouse).exists())
+
+
+    def test_branch_scoped_transfer_allows_sender_dispatch_and_receiver_partial_receipt(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="BRANCH-TRF-API",
+            name_ar="تحويل بين فرعين",
+        )
+        source = self._warehouse("BRANCH-TRF-SOURCE")
+        destination_branch = Branch.objects.create(
+            company=self.company, code="B-DEST", name_ar="فرع الاستلام",
+        )
+        destination = Warehouse.objects.create(
+            company=self.company, branch=destination_branch,
+            code="BRANCH-TRF-DEST", name_ar="مخزن الاستلام",
+        )
+
+        stock = self._movement(
+            "BRANCH-TRF-OPENING", "receipt", destination=source,
+            quantity="5", cost="8",
+        )
+        self.assertEqual(stock.status_code, 201, stock.data)
+        posted_stock = self.client.post(
+            f"/api/inventory/movements/{stock.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_stock.status_code, 200, posted_stock.data)
+
+        sender = get_user_model().objects.create_user(
+            username="branch_transfer_sender", password="test-password",
+        )
+        sender_membership = CompanyMembership.objects.create(
+            user=sender, company=self.company, role="accountant", all_branches=False,
+        )
+        sender_membership.branches.add(self.branch)
+
+        receiver = get_user_model().objects.create_user(
+            username="branch_transfer_receiver", password="test-password",
+        )
+        receiver_membership = CompanyMembership.objects.create(
+            user=receiver, company=self.company, role="accountant", all_branches=False,
+        )
+        receiver_membership.branches.add(destination_branch)
+
+        self.client.force_authenticate(sender)
+        created = self.client.post("/api/inventory/transfers/", {
+            "company": self.company.pk,
+            "transfer_number": "BRANCH-TRF-001",
+            "transfer_date": "2026-11-21",
+            "source_warehouse": source.pk,
+            "destination_warehouse": destination.pk,
+            "lines": [{"product": self.product.pk, "quantity": "4"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        transfer_id = created.data["id"]
+        transfer_line_id = created.data["lines"][0]["id"]
+
+        sender_can_read = self.client.get(f"/api/inventory/transfers/{transfer_id}/")
+        self.assertEqual(sender_can_read.status_code, 200, sender_can_read.data)
+        dispatched = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/dispatch/", {}, format="json",
+        )
+        self.assertEqual(dispatched.status_code, 200, dispatched.data)
+
+        self.client.force_authenticate(receiver)
+        receiver_can_read = self.client.get(f"/api/inventory/transfers/{transfer_id}/")
+        self.assertEqual(receiver_can_read.status_code, 200, receiver_can_read.data)
+        receiver_cannot_dispatch = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/dispatch/", {}, format="json",
+        )
+        self.assertEqual(receiver_cannot_dispatch.status_code, 403, receiver_cannot_dispatch.data)
+
+        partial_receipt = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/receive/",
+            {
+                "receipt_date": "2026-11-22",
+                "lines": [{"transfer_line": transfer_line_id, "quantity": "2"}],
+            },
+            format="json",
+        )
+        self.assertEqual(partial_receipt.status_code, 201, partial_receipt.data)
+        self.assertEqual(partial_receipt.data["lines"][0]["quantity"], "2.0000")
+
+        self.client.force_authenticate(sender)
+        sender_cannot_receive = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/receive/",
+            {
+                "receipt_date": "2026-11-23",
+                "lines": [{"transfer_line": transfer_line_id, "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(sender_cannot_receive.status_code, 403, sender_cannot_receive.data)
+
+        sender_receipt_history = self.client.get(
+            f"/api/inventory/transfer-receipts/?transfer={transfer_id}",
+        )
+        self.assertEqual(sender_receipt_history.status_code, 200, sender_receipt_history.data)
+        receipt_rows = (
+            sender_receipt_history.data["results"]
+            if isinstance(sender_receipt_history.data, dict)
+            else sender_receipt_history.data
+        )
+        self.assertEqual(len(receipt_rows), 1)
+        self.assertEqual(receipt_rows[0]["receipt_number"], f"TR-{transfer_id}-R1")
