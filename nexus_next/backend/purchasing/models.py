@@ -1206,11 +1206,6 @@ class BranchPurchasePolicy(models.Model):
         verbose_name = "سياسة شراء فرع"
         verbose_name_plural = "سياسات شراء الفروع"
 
-    def clean(self):
-        super().clean()
-        if self.branch_id and self.branch.company_id != self.branch.company_id:
-            raise ValidationError({"branch": "الفرع غير صالح."})
-
     def __str__(self):
         return f"{self.branch} - {'مسموح' if self.purchase_enabled else 'موقوف'}"
 
