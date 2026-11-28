@@ -103,8 +103,8 @@ class StockTransferViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("حذف مسودات التحويل متاح لمدير الشركة فقط.")
         instance.delete()
 
-    @action(detail=True, methods=("post",))
-    def dispatch(self, request, pk=None):
+    @action(detail=True, methods=("post",), url_path="dispatch")
+    def dispatch_transfer(self, request, pk=None):
         transfer = self.get_object()
         _check_transfer_warehouse(request.user, transfer.source_warehouse, transfer.company_id)
         transfer = dispatch_stock_transfer(transfer.pk, request.user)
