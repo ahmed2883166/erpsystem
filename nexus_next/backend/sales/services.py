@@ -16,7 +16,7 @@ from inventory.models import StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
 
 def _account(company, role):
@@ -307,13 +307,19 @@ def post_customer_receipt(receipt_id, user):
             invoice=invoice, status=CustomerReceipt.Status.POSTED,
             receipt_date__lte=receipt.receipt_date,
         ).exclude(pk=receipt.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        batch_paid = CustomerReceiptBatchAllocation.objects.filter(
+            invoice=invoice, allocation_date__lte=receipt.receipt_date,
+        ).filter(
+            Q(batch__status="posted")
+            | Q(batch__status="reversed", batch__reversal_date__gt=receipt.receipt_date)
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
         returned = SalesReturn.objects.filter(
             invoice=invoice, return_date__lte=receipt.receipt_date,
         ).filter(
             Q(status=SalesReturn.Status.POSTED)
             | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=receipt.receipt_date)
         ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
-        remaining = max(Decimal("0"), invoice.grand_total - paid - returned)
+        remaining = max(Decimal("0"), invoice.grand_total - paid - batch_paid - returned)
         if receipt.amount > remaining:
             raise ValidationError(f"قيمة السند تتجاوز المتبقي بعد خصم مردودات المبيعات ({remaining}).")
         carrying_amount = receipt.amount
