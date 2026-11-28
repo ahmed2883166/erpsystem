@@ -86,6 +86,8 @@ class Product(models.Model):
     stock_class = models.CharField(max_length=20, choices=StockClass.choices, default=StockClass.FINISHED_GOODS, null=True, blank=True)
     purchase_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     sale_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
+    unit_weight = models.DecimalField(max_digits=18, decimal_places=6, default=0, validators=[MinValueValidator(0)])
+    unit_volume = models.DecimalField(max_digits=18, decimal_places=6, default=0, validators=[MinValueValidator(0)])
     costing_method = models.CharField(max_length=20, choices=CostingMethod.choices, default=CostingMethod.WEIGHTED_AVERAGE)
     min_stock = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     track_expiry = models.BooleanField(default=False)
