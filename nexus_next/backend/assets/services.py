@@ -1135,7 +1135,7 @@ def post_asset_supplier_payment(payment_id, user=None):
 
     if available_balance < payment.amount:
         raise ValidationError(
-            f"الرصيد المتاح في تاريخ السداد ({available_balance}) أقل من مبلغ السداد ({payment.amount})."
+            f"الرصيد المتاح غير كافٍ في تاريخ السداد ({available_balance}) لتغطية مبلغ السداد ({payment.amount})."
         )
     for change in later_movements:
         available_balance += change
