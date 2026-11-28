@@ -37,6 +37,59 @@ class CustomerRefundApiTests(APITestCase):
             "refund_number": number, "refund_date": "2026-03-12", "amount": amount,
         }, format="json")
 
+    def _post_cash_movement(self, number, movement_date, debit, credit):
+        from accounting.services import post_journal
+
+        debit = Decimal(debit)
+        credit = Decimal(credit)
+        offset = ChartOfAccount.objects.create(
+            company=self.company, code=f"REF-{number}",
+            name_ar="مقابل حركة خزينة اختبار",
+            nature=ChartOfAccount.Nature.EXPENSE if credit else ChartOfAccount.Nature.REVENUE,
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number=number, entry_date=movement_date,
+            description="حركة اختبار على حساب خزينة مردودات العملاء",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.treasury.account, debit=debit, credit=credit,
+        )
+        JournalLine.objects.create(
+            entry=entry, account=offset, debit=credit, credit=debit,
+        )
+        return post_journal(entry.pk, actor=self.user)
+
+    def test_customer_refund_cannot_use_a_deposit_after_its_refund_date(self):
+        self._post_cash_movement("REFUND-CASH-OUT", date(2026, 3, 11), "0", "100")
+        self._post_cash_movement("REFUND-CASH-FUTURE-IN", date(2026, 3, 13), "500", "0")
+        refund = self._create_refund("REFUND-FUTURE-DEPOSIT", "40.0000")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        journal_count = JournalEntry.objects.count()
+
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{refund.data['id']}/post/", {}, format="json",
+        )
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("تاريخ المردود", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
+    def test_customer_refund_rejects_intermediate_future_overdraft(self):
+        self._post_cash_movement("REFUND-FUTURE-OUT", date(2026, 3, 13), "0", "150")
+        self._post_cash_movement("REFUND-FUTURE-IN-2", date(2026, 3, 14), "100", "0")
+        refund = self._create_refund("REFUND-FUTURE-OVERDRAFT", "40.0000")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        journal_count = JournalEntry.objects.count()
+
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{refund.data['id']}/post/", {}, format="json",
+        )
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("حركة لاحقة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_refund_api_posts_journal_and_treasury_movement_and_reverses_both(self):
         created = self._create_refund("REFUND-001", "40.0000")
         self.assertEqual(created.status_code, 201, created.data)
