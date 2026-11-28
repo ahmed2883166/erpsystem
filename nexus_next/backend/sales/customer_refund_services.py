@@ -163,11 +163,16 @@ def reverse_customer_refund(refund_id, user, entry_date):
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
-    reversal_movement = TreasuryTransaction.objects.filter(
-        journal_entry=reversal, status=TreasuryTransaction.Status.POSTED,
-    ).first()
-    if not reversal_movement:
-        raise ValidationError("لم تُنشأ حركة الخزينة العكسية للمردود.")
+    reversal_movement = TreasuryTransaction.objects.create(
+        company=refund.company, branch=refund.branch, fiscal_year=reversal.fiscal_year,
+        source_account=refund.treasury_account, counter_account=movement.counter_account,
+        kind=TreasuryTransaction.Kind.RECEIPT, status=TreasuryTransaction.Status.POSTED,
+        document_number=f"AUTO-SALE-REF-REV-{refund.pk}",
+        transaction_date=entry_date, amount=refund.amount,
+        description=f"عكس رد مبلغ العميل {refund.customer.name_ar} - سند {refund.refund_number}"[:500],
+        reference=movement.reference, journal_entry=reversal, created_by=user,
+        posted_at=timezone.now(),
+    )
     refund.status = CustomerRefund.Status.REVERSED
     refund.reversal_date = entry_date
     refund.reversal_journal_entry = reversal
