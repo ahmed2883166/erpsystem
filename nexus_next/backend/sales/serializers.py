@@ -650,6 +650,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     def get_approval_status(self, obj):
         """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
+        attempts = list(obj.approval_requests.all())
+        latest = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
+        if obj.status != SalesInvoice.Status.DRAFT and latest and latest.requested_credit_limit is not None:
+            return latest.status
         limit = obj.discount_approval_limit
         lines = list(obj.lines.all())
         discount_exceeded = limit is not None and any(line.discount_percent > limit for line in lines)
@@ -658,14 +662,14 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             and obj.grand_total > obj.invoice_approval_limit
         )
         from sales.services import customer_credit_exposure
-        credit_exposure = customer_credit_exposure(obj.customer)
+        credit_exposure = customer_credit_exposure(obj.customer) if obj.customer.credit_limit > 0 else Decimal("0")
         credit_exceeded = (
-            obj.customer.credit_limit > 0
+            obj.status == SalesInvoice.Status.DRAFT
+            and obj.customer.credit_limit > 0
             and credit_exposure + obj.grand_total > obj.customer.credit_limit
         )
         if not discount_exceeded and not amount_exceeded and not credit_exceeded:
             return "not_required"
-        attempts = list(obj.approval_requests.all())
         approval = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
         if not approval:
             return "pending"
