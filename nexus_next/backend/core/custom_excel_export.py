@@ -99,6 +99,12 @@ def _queryset_for(resource, company_id, user):
     return qs.order_by("pk")
 
 
+def _excel_value(value):
+    if isinstance(value, str) and value.lstrip(" \\t\\r\\n")[:1] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
 def _plain(value):
     if value is None:
         return ""
@@ -174,7 +180,7 @@ class CustomExcelExportView(APIView):
         sheet = workbook.create_sheet(title=spec["label"][:31])
         sheet.append(headers)
         for row in qs.values_list(*selected).iterator(chunk_size=2000):
-            sheet.append([_plain(value) for value in row])
+            sheet.append([_excel_value(value) for value in row])
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
