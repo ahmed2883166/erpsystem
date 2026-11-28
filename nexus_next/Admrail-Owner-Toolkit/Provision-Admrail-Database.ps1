@@ -95,7 +95,7 @@ try {
         $appPassword = New-RandomSecret 48
         $escapedPassword = $appPassword.Replace("'","''")
         $sqlFile = Join-Path ([IO.Path]::GetTempPath()) ("admrail-provision-" + [guid]::NewGuid().ToString("N") + ".sql")
-        $sql = "CREATE ROLE " + (Quote-Identifier $appUser) + " LOGIN PASSWORD '" + $escapedPassword + "' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;" + [Environment]::NewLine
+        $sql = "CREATE ROLE " + (Quote-Identifier $appUser) + " LOGIN PASSWORD '" + $escapedPassword + "' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;" + [Environment]::NewLine
         [IO.File]::WriteAllText($sqlFile,$sql,(New-Object System.Text.UTF8Encoding($false)))
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
         & (Join-Path $env:SystemRoot "System32\icacls.exe") $sqlFile /inheritance:r /grant:r "$($identity):F" "SYSTEM:F" | Out-Null
@@ -108,6 +108,10 @@ try {
         & $createdb --no-password --host=$hostName --port=$port --username=$adminUser --owner=$appUser --encoding=UTF8 --template=template0 $dbName 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "تعذر إنشاء قاعدة البيانات الجديدة. لن يتم تعديل أي قاعدة موجودة." }
         $createdDatabase = $true
+        $databaseAccessSql = "REVOKE ALL ON DATABASE " + (Quote-Identifier $dbName) + " FROM PUBLIC; GRANT CONNECT, TEMPORARY ON DATABASE " + (Quote-Identifier $dbName) + " TO " + (Quote-Identifier $appUser) + ";"
+        $null = Invoke-Psql $psql $hostName $port $adminUser "postgres" $databaseAccessSql
+        $schemaAccessSql = "REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
+        $null = Invoke-Psql $psql $hostName $port $adminUser $dbName $schemaAccessSql
 
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
         $env:PGPASSWORD = $appPassword
