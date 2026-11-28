@@ -1392,7 +1392,7 @@ class InventoryValuationNRVTests(APITestCase):
         self.assertEqual(Decimal(first["adjustment_amount"]), Decimal("10.00"))
         first_entry = JournalEntry.objects.get(pk=first["journal_entry"])
         self.assertEqual(first_entry.status, JournalEntry.Status.POSTED)
-        self.assertEqual(first_entry.lines.aggregate(debit=Sum("debit"))["debit"], Decimal("10.00"))
+        self.assertEqual(first_entry.lines.get(debit__gt=0).debit, Decimal("10.00"))
 
         second = self._assessment("NRV-002", "9", "2026-03-12")
         balance.refresh_from_db()
