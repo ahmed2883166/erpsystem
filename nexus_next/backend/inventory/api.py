@@ -1509,8 +1509,8 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             suggested = max(minimum - projected, Decimal("0"))
             age_days = max((today - setting.last_movement).days, 0) if setting.last_movement else None
             stock_status = (
-                "sold" if quantity <= 0 else
                 "reorder" if projected < minimum else
+                "sold" if quantity <= 0 else
                 "stagnant" if age_days is not None and age_days > 180 else "available"
             )
             rows.append({
