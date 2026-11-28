@@ -1586,6 +1586,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             reversal = reverse_operational_journal(
                 receipt.journal_entry_id, request.user, entry_date, JournalEntry.Source.SALES
             )
+            from treasury.services import reverse_linked_document_treasury_movement
+            reverse_linked_document_treasury_movement(
+                journal_entry_id=receipt.journal_entry_id,
+                reversal_journal_entry=reversal,
+                user=request.user,
+            )
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
