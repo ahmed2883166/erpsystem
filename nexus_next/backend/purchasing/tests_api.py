@@ -3934,7 +3934,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
                 "description": "شحن",
                 "expense_account": expense.pk,
                 "billed_quantity": "1",
-                "unit_price": "40.0000",
+                "unit_price": "80.0000",
                 "tax_rate": "0",
             }],
         }, format="json")
