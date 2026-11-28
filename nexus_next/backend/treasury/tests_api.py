@@ -33,6 +33,45 @@ class TreasuryWorkflowTests(APITestCase):
         self.cash = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.cash_gl, kind="cash", code="CASH-1", name_ar="الخزينة الرئيسية")
         self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.bank_gl, kind="bank", code="BANK-1", name_ar="البنك الرئيسي", bank_name="بنك تجريبي")
 
+    def _branch_limited_treasury_user(self):
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع ثانٍ",
+        )
+        limited = get_user_model().objects.create_user(
+            username="treasury-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.assertNotIn(other_branch.pk, membership.branches.values_list("id", flat=True))
+        self.client.force_authenticate(limited)
+        return limited
+
+    def test_branch_limited_user_cannot_create_company_wide_treasury_account(self):
+        self._branch_limited_treasury_user()
+        global_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1199", name_ar="خزينة عامة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": None, "account": global_gl.pk,
+            "kind": "cash", "code": "CASH-GLOBAL", "name_ar": "خزينة عامة",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(TreasuryAccount.objects.filter(code="CASH-GLOBAL").exists())
+
+    def test_branch_limited_user_cannot_move_branch_treasury_account_to_company_wide_scope(self):
+        self._branch_limited_treasury_user()
+        response = self.client.patch(
+            f"/api/treasury/accounts/{self.cash.pk}/",
+            {"branch": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.cash.refresh_from_db()
+        self.assertEqual(self.cash.branch_id, self.branch.pk)
+
     def _create(self, kind="receipt", **extra):
         payload = {
             "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
