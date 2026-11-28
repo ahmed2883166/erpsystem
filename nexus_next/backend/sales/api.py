@@ -563,6 +563,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     def post(self, request, pk=None):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         invoice = self.get_object()
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).get(pk=invoice.pk)
         self._check_write(invoice.company_id)
         if invoice.delivery_id:
             if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
