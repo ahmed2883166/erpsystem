@@ -112,7 +112,17 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
       note = entered.trim();
       if (!note) { setError("سبب الرفض مطلوب."); return; }
     } else {
-      note = window.prompt("ملاحظة الموافقة (اختياري):") || "";
+      const entered = window.prompt(
+        row.requested_credit_limit !== null
+          ? "اكتب سبب الاستثناء الائتماني ومبرر السماح بتجاوز الحد:"
+          : "ملاحظة الموافقة (اختياري):",
+      );
+      if (entered === null) return;
+      note = entered.trim();
+      if (row.requested_credit_limit !== null && !note) {
+        setError("سبب الاستثناء الائتماني مطلوب.");
+        return;
+      }
     }
     setBusy(true); setError(""); setNotice("");
     try {
