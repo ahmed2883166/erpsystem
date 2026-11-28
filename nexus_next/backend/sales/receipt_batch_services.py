@@ -12,9 +12,9 @@ from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
 from sales.models import (
     CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation,
-    SalesInvoice, SalesReturn,
+    CustomerRefund, SalesInvoice, SalesReturn,
 )
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 def _account(company, role):
@@ -246,6 +246,26 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("القيد المرتبط بسند القبض المجمع ليس مرحّلًا.")
     if entry_date < batch.receipt_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
+    active_refunds = CustomerRefund.objects.filter(
+        source_receipt_batch=batch,
+    ).filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | (
+            Q(status=CustomerRefund.Status.REVERSED)
+            & (
+                Q(reversal_date__isnull=True)
+                | Q(reversal_journal_entry__entry_date__gte=entry_date)
+                | Q(reversal_journal_entry__isnull=True)
+                | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
+                | Q(reversal_treasury_transaction__isnull=True)
+                | Q(reversal_treasury_transaction__journal_entry__isnull=True)
+                | ~Q(reversal_treasury_transaction__status=TreasuryTransaction.Status.POSTED)
+                | ~Q(reversal_treasury_transaction__journal_entry__status=JournalEntry.Status.POSTED)
+            )
+        )
+    ).exists()
+    if active_refunds:
+        raise ValidationError("يجب عكس مردودات العميل المرتبطة بالدفعة أولًا قبل عكس سند القبض المجمع.")
 
     allocations = list(batch.allocations.select_related("invoice"))
     latest_allocation_date = max(
@@ -306,6 +326,12 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
     try:
         reversal = reverse_operational_journal(
             batch.journal_entry_id, user, entry_date, JournalEntry.Source.SALES,
+        )
+        from treasury.services import reverse_linked_document_treasury_movement
+        reverse_linked_document_treasury_movement(
+            journal_entry_id=batch.journal_entry_id,
+            reversal_journal_entry=reversal,
+            user=user,
         )
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages

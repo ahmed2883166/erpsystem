@@ -1093,6 +1093,18 @@ def post_supplier_refund(refund_id, user):
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
+    if document.method == SupplierRefund.Method.BANK:
+        from treasury.models import TreasuryTransaction
+        from treasury.services import record_posted_document_bank_movement
+        record_posted_document_bank_movement(
+            company=document.company, branch=branch, fiscal_year=year,
+            account=document.payment_account, kind=TreasuryTransaction.Kind.RECEIPT,
+            amount=document.amount, transaction_date=document.refund_date,
+            document_number=f"AUTO-PUR-REF-{document.pk}",
+            description=f"استرداد من المورد {document.supplier.name_ar} - سند {document.refund_number}",
+            counter_account=payable, journal_entry=posted_entry, user=user,
+            reference=document.reference,
+        )
     document.journal_entry = posted_entry
     document.status = SupplierRefund.Status.POSTED
     document.posted_at = timezone.now()
@@ -1155,6 +1167,12 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     try:
         reversal_entry = reverse_operational_journal(
             document.journal_entry_id, user, entry_date, JournalEntry.Source.PURCHASES,
+        )
+        from treasury.services import reverse_linked_document_treasury_movement
+        reverse_linked_document_treasury_movement(
+            journal_entry_id=document.journal_entry_id,
+            reversal_journal_entry=reversal_entry,
+            user=user,
         )
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages

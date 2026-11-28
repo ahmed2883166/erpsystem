@@ -1121,7 +1121,7 @@ export type CustomerReceipt = { id: number; company: number; customer: number; c
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
-  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal"|"fx_revaluation"|"fx_revaluation_reversal"|"customer_refund"|"customer_refund_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;

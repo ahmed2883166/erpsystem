@@ -1795,6 +1795,26 @@ class SalesWorkflowTests(APITestCase):
         posted_receipt = self.client.post(f"/api/sales-documents/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
         original_entry_id = posted_receipt.data["journal_entry"]
+        from treasury.models import BankReconciliation, BankStatementLine, TreasuryTransaction
+        bank_mirror = TreasuryTransaction.objects.get(journal_entry_id=original_entry_id)
+        reconciliation = BankReconciliation.objects.create(
+            company=self.company, bank_account=bank_mirror.source_account,
+            statement_number="BANK-REV-BLOCK-001", statement_date=date(2026, 3, 12),
+            opening_balance=Decimal("0"), closing_balance=Decimal("100"),
+        )
+        matched_line = BankStatementLine.objects.create(
+            reconciliation=reconciliation, line_number=1, transaction_date=date(2026, 3, 11),
+            description="تحصيل العميل", amount=Decimal("100"),
+            matched_transaction=bank_mirror,
+        )
+        blocked_reversal = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_id}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(blocked_reversal.status_code, 400, blocked_reversal.data)
+        original = JournalEntry.objects.get(pk=original_entry_id)
+        self.assertEqual(original.status, JournalEntry.Status.POSTED)
+        matched_line.delete()
 
         reversed_response = self.client.post(
             f"/api/sales-documents/receipts/{receipt_id}/reverse/",
@@ -1808,6 +1828,9 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(original.status, JournalEntry.Status.REVERSED)
         self.assertEqual(reversal.reversal_of_id, original.pk)
         self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        bank_mirror.refresh_from_db()
+        self.assertEqual(bank_mirror.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(bank_mirror.reversal_journal_entry_id, reversal.pk)
         invoice_after = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(invoice_after["paid_total"], "0")
         self.assertEqual(invoice_after["balance_due"], "228.0000")

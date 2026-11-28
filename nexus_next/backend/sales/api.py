@@ -24,7 +24,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from companies.models import Branch, Company, CompanyMembership
 from inventory.models import Product, StockMovement
 from customers.models import Customer
-from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, CustomerRefund, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
@@ -733,6 +733,32 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     "description": f"عكس سند القبض المجمع {batch.receipt_number}",
                     "debit": batch.amount, "credit": Decimal("0"), "sort": 3,
                 })
+        customer_refunds = CustomerRefund.objects.filter(
+            company_id=company_id, customer_id=customer_id,
+            branch__in=accessible_branches(request.user),
+            status__in=(CustomerRefund.Status.POSTED, CustomerRefund.Status.REVERSED),
+        ).select_related("source_receipt_batch", "reversal_journal_entry")
+        if branch_id:
+            customer_refunds = customer_refunds.filter(branch_id=branch_id)
+        for refund in customer_refunds:
+            events.append({
+                "date": refund.refund_date, "kind": "customer_refund",
+                "number": refund.refund_number,
+                "description": f"رد مبلغ للعميل من الدفعة المقدمة {refund.source_receipt_batch.receipt_number}",
+                "debit": refund.amount, "credit": Decimal("0"), "sort": 2,
+            })
+            if (
+                refund.status == CustomerRefund.Status.REVERSED
+                and refund.reversal_journal_entry_id
+                and refund.reversal_journal_entry.status == JournalEntry.Status.POSTED
+            ):
+                events.append({
+                    "date": refund.reversal_journal_entry.entry_date,
+                    "kind": "customer_refund_reversal",
+                    "number": f"REV-{refund.refund_number}",
+                    "description": f"عكس رد المبلغ للعميل {refund.refund_number}",
+                    "debit": Decimal("0"), "credit": refund.amount, "sort": 3,
+                })
         returns = SalesReturn.objects.filter(
             invoice__in=invoices,
             status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
@@ -971,9 +997,26 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 batch__in=advance_batches, allocation_date__lte=as_of,
             ).values("batch_id").annotate(total=Sum("amount"))
         }
+        refunded_by_batch = {
+            row["source_receipt_batch_id"]: row["total"]
+            for row in CustomerRefund.objects.filter(
+                source_receipt_batch__in=advance_batches, refund_date__lte=as_of,
+            ).filter(
+                Q(status=CustomerRefund.Status.POSTED)
+                | (
+                    Q(status=CustomerRefund.Status.REVERSED)
+                    & (
+                        Q(reversal_journal_entry__entry_date__gt=as_of)
+                        | Q(reversal_journal_entry__isnull=True)
+                        | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
+                    )
+                )
+            ).values("source_receipt_batch_id").annotate(total=Sum("amount"))
+        }
         for batch in advance_batches:
             allocated_as_of = allocated_by_batch.get(batch.pk, Decimal("0"))
-            unallocated = max(batch.amount - allocated_as_of, Decimal("0"))
+            refunded_as_of = refunded_by_batch.get(batch.pk, Decimal("0"))
+            unallocated = max(batch.amount - allocated_as_of - refunded_as_of, Decimal("0"))
             if unallocated <= 0:
                 continue
             customer = customers.setdefault(batch.customer_id, {
@@ -1585,6 +1628,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         try:
             reversal = reverse_operational_journal(
                 receipt.journal_entry_id, request.user, entry_date, JournalEntry.Source.SALES
+            )
+            from treasury.services import reverse_linked_document_treasury_movement
+            reverse_linked_document_treasury_movement(
+                journal_entry_id=receipt.journal_entry_id,
+                reversal_journal_entry=reversal,
+                user=request.user,
             )
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages

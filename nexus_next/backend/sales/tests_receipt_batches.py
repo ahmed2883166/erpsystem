@@ -1,8 +1,10 @@
+from datetime import date
 from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
 from accounting.models import JournalEntry, JournalLine
+from accounting.services import post_journal, reverse_operational_journal
 
 
 class CustomerReceiptBatchTests(APITestCase):
@@ -187,6 +189,179 @@ class CustomerReceiptBatchTests(APITestCase):
             debit = sum((line.debit for line in lines), Decimal("0"))
             credit = sum((line.credit for line in lines), Decimal("0"))
             self.assertEqual(debit, credit, entry.entry_number)
+
+    def test_reversing_bank_receipt_batch_also_reverses_its_treasury_mirror(self):
+        from accounting.models import ChartOfAccount
+        from treasury.models import TreasuryAccount, TreasuryTransaction
+
+        bank_gl = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-BATCH-REV",
+            name_ar="بنك سندات القبض المجمعة", currency_code="EGP",
+        )
+        created = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "receipt_number": "BATCH-BANK-REV-001",
+            "receipt_date": "2026-03-11",
+            "method": "bank",
+            "payment_account": bank_gl.pk,
+            "amount": "75",
+            "allocations": [],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        mirror = TreasuryTransaction.objects.get(journal_entry_id=posted.data["journal_entry"])
+        self.assertEqual(mirror.status, TreasuryTransaction.Status.POSTED)
+
+        reversed_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(reversed_batch.status_code, 200, reversed_batch.data)
+        mirror.refresh_from_db()
+        self.assertEqual(mirror.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(mirror.reversal_journal_entry_id, reversed_batch.data["reversal_journal_entry"])
+
+    def test_customer_refund_reconciles_statement_and_advance_and_blocks_batch_reversal(self):
+        from accounting.models import ChartOfAccount
+        from sales.models import CustomerRefund
+        from treasury.models import TreasuryAccount, TreasuryTransaction
+
+        cash = ChartOfAccount.objects.get(company=self.company, code="1005")
+        receivables = ChartOfAccount.objects.get(company=self.company, code="1200")
+        from companies.models import FiscalYear
+        year = FiscalYear.objects.get(company=self.company, name="2026")
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-ADV-REFUND",
+            name_ar="خزينة رد الدفعات المقدمة", currency_code="EGP",
+        )
+        batch_response = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk, "customer": self.customer.pk, "branch": self.branch.pk,
+            "receipt_number": "BATCH-REFUND-001", "receipt_date": "2026-03-11",
+            "method": "cash", "amount": "100", "allocations": [],
+        }, format="json")
+        self.assertEqual(batch_response.status_code, 201, batch_response.data)
+        batch_posted = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch_response.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(batch_posted.status_code, 200, batch_posted.data)
+
+        refund_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            entry_number="CUSTOMER-REFUND-001", entry_date=date(2026, 3, 12),
+            description="رد جزء من دفعة مقدمة للعميل", source_type=JournalEntry.Source.SALES,
+            created_by=self.user,
+        )
+        JournalLine.objects.create(
+            entry=refund_entry, account=receivables, debit=Decimal("25"), credit=0,
+        )
+        JournalLine.objects.create(
+            entry=refund_entry, account=cash, debit=0, credit=Decimal("25"),
+        )
+        refund_entry = post_journal(refund_entry.pk, actor=self.user)
+        refund_movement = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            source_account=treasury_account, counter_account=receivables,
+            kind=TreasuryTransaction.Kind.PAYMENT, status=TreasuryTransaction.Status.POSTED,
+            document_number="AUTO-CUSTOMER-REFUND-001", transaction_date=date(2026, 3, 12),
+            amount=Decimal("25"), description="رد مبلغ للعميل",
+            journal_entry=refund_entry, created_by=self.user,
+        )
+        refund = CustomerRefund.objects.create(
+            company=self.company, customer=self.customer, branch=self.branch,
+            source_receipt_batch_id=batch_response.data["id"],
+            treasury_account=treasury_account, treasury_transaction=refund_movement,
+            refund_number="CUSTOMER-REFUND-001", refund_date=date(2026, 3, 12),
+            amount=Decimal("25"), status=CustomerRefund.Status.POSTED, created_by=self.user,
+        )
+
+        statement_before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-11&date_to=2026-03-13"
+        )
+        self.assertEqual(statement_before_reversal.status_code, 200, statement_before_reversal.data)
+        self.assertEqual(statement_before_reversal.data["closing_balance"], "-75.0000")
+        self.assertIn("customer_refund", [
+            row["document_type"] for row in statement_before_reversal.data["rows"]
+        ])
+        aging_before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-13"
+        )
+        self.assertEqual(aging_before_reversal.status_code, 200, aging_before_reversal.data)
+        self.assertEqual(aging_before_reversal.data["totals"]["unallocated_advances"], "75.0000")
+
+        blocked = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch_response.data['id']}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertIn("مردودات العميل", str(blocked.data))
+
+        refund_reversal = reverse_operational_journal(
+            refund_entry.pk, self.user, date(2026, 3, 14), JournalEntry.Source.SALES,
+        )
+        reversal_movement = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            source_account=treasury_account, counter_account=receivables,
+            kind=TreasuryTransaction.Kind.RECEIPT, status=TreasuryTransaction.Status.POSTED,
+            document_number="AUTO-CUSTOMER-REFUND-REV-001", transaction_date=date(2026, 3, 14),
+            amount=Decimal("25"), description="عكس رد مبلغ للعميل",
+            journal_entry=refund_reversal, created_by=self.user,
+        )
+        TreasuryTransaction.objects.filter(pk=refund_movement.pk).update(
+            status=TreasuryTransaction.Status.REVERSED,
+            reversal_journal_entry=refund_reversal,
+        )
+        refund.status = CustomerRefund.Status.REVERSED
+        refund.reversal_date = date(2026, 3, 14)
+        refund.reversal_journal_entry = refund_reversal
+        refund.reversal_treasury_transaction = reversal_movement
+        refund.save(update_fields=(
+            "status", "reversal_date", "reversal_journal_entry", "reversal_treasury_transaction",
+        ))
+
+        statement_after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-11&date_to=2026-03-14"
+        )
+        self.assertEqual(statement_after_reversal.status_code, 200, statement_after_reversal.data)
+        self.assertEqual(statement_after_reversal.data["closing_balance"], "-100.0000")
+        self.assertIn("customer_refund_reversal", [
+            row["document_type"] for row in statement_after_reversal.data["rows"]
+        ])
+        aging_after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-14"
+        )
+        self.assertEqual(aging_after_reversal.status_code, 200, aging_after_reversal.data)
+        self.assertEqual(aging_after_reversal.data["totals"]["unallocated_advances"], "100.0000")
+        reconciliation = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-14"
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        customer_reconciliation = next(
+            row for row in reconciliation.data["rows"] if row["key"] == "customers"
+        )
+        self.assertEqual(customer_reconciliation["status"], "matched", customer_reconciliation)
+        self.assertEqual(Decimal(customer_reconciliation["difference"]), Decimal("0"))
+
+        reversed_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch_response.data['id']}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(reversed_batch.status_code, 200, reversed_batch.data)
+        final_statement = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-11&date_to=2026-03-15"
+        )
+        self.assertEqual(final_statement.status_code, 200, final_statement.data)
+        self.assertEqual(final_statement.data["closing_balance"], "0.0000")
 
     def test_direct_receipt_cannot_overcollect_after_batch_allocation(self):
         invoice_id = self._create_posted_invoice("BATCH-INV-DIRECT-OVER")

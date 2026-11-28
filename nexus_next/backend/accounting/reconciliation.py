@@ -139,6 +139,7 @@ class SubledgerReconciliationView(APIView):
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
         from customers.models import Customer
         from suppliers.models import Supplier
+        from treasury.models import TreasuryTransaction
         from accounting.models import FxSubledgerRevaluation
         from inventory.models import StockBalance, StockMovementJournalLink
         from hr.models import Employee, PayrollComponent, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
@@ -231,7 +232,15 @@ class SubledgerReconciliationView(APIView):
         )
         active_customer_refunds = customer_refunds.filter(
             Q(status=CustomerRefund.Status.POSTED)
-            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
+            | (
+                Q(status=CustomerRefund.Status.REVERSED)
+                & (
+                    Q(reversal_journal_entry__entry_date__gt=as_of)
+                    | Q(reversal_date__isnull=True)
+                    | Q(reversal_journal_entry__isnull=True)
+                    | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
+                )
+            )
         )
         active_supplier_returns = supplier_returns.filter(
             Q(status=SupplierReturn.Status.POSTED)
@@ -561,11 +570,16 @@ class SubledgerReconciliationView(APIView):
                 ).count()
                 + customer_refunds.filter(
                     status=CustomerRefund.Status.REVERSED,
-                    reversal_date__lte=as_of,
+                ).filter(
+                    Q(reversal_date__isnull=True)
+                    | Q(reversal_date__lte=as_of)
                 ).filter(
                     Q(reversal_treasury_transaction__isnull=True)
                     | Q(reversal_treasury_transaction__journal_entry__isnull=True)
+                    | ~Q(reversal_treasury_transaction__status=TreasuryTransaction.Status.POSTED)
+                    | ~Q(reversal_treasury_transaction__journal_entry__status=JournalEntry.Status.POSTED)
                     | Q(reversal_journal_entry__isnull=True)
+                    | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
                 ).count()
             ),
             "purchasing": purchase_invoices.filter(journal_entry__isnull=True).count() + supplier_payments.filter(journal_entry__isnull=True).count() + supplier_returns.filter(journal_entry__isnull=True).count() + supplier_refunds.filter(journal_entry__isnull=True).count(),
