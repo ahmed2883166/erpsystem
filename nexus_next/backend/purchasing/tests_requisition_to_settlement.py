@@ -11,7 +11,7 @@ from companies.models import (
 )
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 class PurchasingRequisitionToSettlementE2ETests(APITestCase):
@@ -248,7 +248,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             "company": self.company.pk, "supplier": self.supplier_a.pk,
             "invoice": invoice.data["id"], "payment_number": "PAY-E2E-001",
             "payment_date": self.payment_date.isoformat(), "method": "bank",
-            "payment_account": self.bank.pk, "amount": "114",
+            "payment_account": self.bank.pk, "amount": "228",
         }, format="json")
         self.assertEqual(payment.status_code, 201, payment.data)
         posted_payment = self.client.post(
@@ -274,11 +274,54 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.assertEqual(posted_return.status_code, 200, posted_return.data)
         self.assertEqual(posted_return.data["grand_total"], "114.0000")
 
+        # Refund the supplier credit, reverse the refund, then reverse the
+        # return in the required order to reconcile stock, AP, GL and treasury.
+        refund_date = self.return_date + timedelta(days=1)
+        refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier_a.pk,
+            "return_document": posted_return.data["id"],
+            "refund_number": "REF-E2E-001", "refund_date": refund_date.isoformat(),
+            "method": "bank", "payment_account": self.bank.pk,
+            "amount": "114", "reference": "BANK-E2E-REFUND",
+        }, format="json")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        posted_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/post/", {},
+            format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+        self.assertEqual(posted_refund.data["status"], "posted")
+
+        refund_reversal_date = refund_date + timedelta(days=1)
+        reversed_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
+            {"entry_date": refund_reversal_date.isoformat()}, format="json",
+        )
+        self.assertEqual(reversed_refund.status_code, 200, reversed_refund.data)
+        self.assertEqual(reversed_refund.data["status"], "reversed")
+        refund_movement = TreasuryTransaction.objects.get(
+            journal_entry_id=posted_refund.data["journal_entry"],
+        )
+        self.assertEqual(refund_movement.status, TreasuryTransaction.Status.REVERSED)
+        refund_reversal_movement = TreasuryTransaction.objects.get(
+            reversal_journal_entry_id=reversed_refund.data["reversal_journal_entry"],
+        )
+        self.assertEqual(refund_reversal_movement.status, TreasuryTransaction.Status.POSTED)
+        self.assertEqual(refund_reversal_movement.kind, TreasuryTransaction.Kind.PAYMENT)
+
+        return_reversal_date = refund_reversal_date + timedelta(days=1)
+        reversed_return = self.client.post(
+            f"/api/purchasing/returns/{posted_return.data['id']}/reverse/",
+            {"entry_date": return_reversal_date.isoformat()}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+
         balance = StockBalance.objects.get(
             product=self.product, warehouse=self.warehouse,
         )
-        self.assertEqual(balance.quantity, Decimal("1.0000"))
-        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+        self.assertEqual(balance.quantity, Decimal("2.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("200.0000"))
 
         grni = self.client.get("/api/purchasing/receipts/grni-aging/", {
             "company": self.company.pk, "as_of": self.return_date.isoformat(),
@@ -292,22 +335,43 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             f"/api/purchasing/invoices/{invoice.data['id']}/",
         )
         self.assertEqual(invoice_after.status_code, 200, invoice_after.data)
-        self.assertEqual(invoice_after.data["paid_total"], "114.0000")
+        self.assertEqual(invoice_after.data["paid_total"], "228.0000")
         self.assertEqual(invoice_after.data["balance_due"], "0.0000")
 
         statement = self.client.get("/api/purchasing/invoices/supplier-statement/", {
             "company": self.company.pk, "supplier": self.supplier_a.pk,
-            "date_from": self.request_date.isoformat(), "date_to": (self.return_date + timedelta(days=1)).isoformat(),
+            "date_from": self.request_date.isoformat(),
+            "date_to": return_reversal_date.isoformat(),
         })
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["closing_balance"], "0.0000")
 
+        aging = self.client.get("/api/purchasing/invoices/supplier-aging/", {
+            "company": self.company.pk, "as_of": return_reversal_date.isoformat(),
+        })
+        self.assertEqual(aging.status_code, 200, aging.data)
+        self.assertEqual(aging.data["totals"]["total_due"], "0.0000")
+
+        reconciliation = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}"
+            f"&as_of={return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        supplier_row = next(row for row in reconciliation.data["rows"] if row["key"] == "suppliers")
+        self.assertEqual(supplier_row["status"], "matched", supplier_row)
+        self.assertEqual(Decimal(supplier_row["subledger_balance"]), Decimal("0"))
+        self.assertEqual(Decimal(supplier_row["gl_balance"]), Decimal("0"))
+        self.assertEqual(Decimal(supplier_row["difference"]), Decimal("0"))
+
+        ap_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE,
+        ).account
         ap = JournalLine.objects.filter(
-            account__code="2200", entry__company=self.company,
-            entry__status=JournalEntry.Status.POSTED,
+            account=ap_account, entry__company=self.company,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        self.assertEqual(ap["debit"], Decimal("228.0000"))
-        self.assertEqual(ap["credit"], Decimal("228.0000"))
+        self.assertEqual(ap["debit"], ap["credit"])
+        self.assertEqual(ap["debit"] - ap["credit"], Decimal("0"))
         for entry in JournalEntry.objects.filter(
             company=self.company, status=JournalEntry.Status.POSTED,
         ):
