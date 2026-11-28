@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
+from django.utils import timezone
 
 from accounting.models import ChartOfAccount, TaxCode
 from core.money import round_currency_amount
@@ -770,7 +771,17 @@ class CustomerReceiptBatch(models.Model):
 
     @property
     def unallocated_amount(self):
-        return max(self.amount - self.allocated_amount, Decimal("0"))
+        as_of = timezone.localdate()
+        allocated = self.allocations.filter(
+            allocation_date__lte=as_of,
+        ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
+        refunded = self.refunds.filter(
+            refund_date__lte=as_of,
+        ).filter(
+            models.Q(status=CustomerRefund.Status.POSTED)
+            | models.Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
+        ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
+        return max(self.amount - allocated - refunded, Decimal("0"))
 
     def clean(self):
         super().clean()
