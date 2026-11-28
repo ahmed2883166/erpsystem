@@ -592,7 +592,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(by_category["standard"]["tax_amount"], "14.0000")
         for category in ("zero_rated", "exempt", "out_of_scope"):
             self.assertEqual(by_category[category]["taxable_base"], "100.0000")
-            self.assertEqual(by_category[category]["tax_amount"], "0.0000")
+            self.assertEqual(Decimal(by_category[category]["tax_amount"]), Decimal("0.0000"))
 
         reverse_charge = TaxCode.objects.create(
             company=self.company, country="EG", code="VAT-CAT-RC", name_ar="احتساب عكسي",
