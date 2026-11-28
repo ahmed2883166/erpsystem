@@ -19,11 +19,10 @@ describe("CustomExcelExportButton", () => {
     localStorage.clear();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("URL", {
-      ...URL,
+    vi.stubGlobal("URL", Object.assign(URL, {
       createObjectURL: vi.fn(() => "blob:custom-export"),
       revokeObjectURL: vi.fn(),
-    });
+    }));
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
