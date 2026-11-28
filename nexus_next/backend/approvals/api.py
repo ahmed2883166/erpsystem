@@ -113,7 +113,6 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
                 customer.credit_limit != approval.requested_credit_limit
                 or current_exposure != approval.requested_credit_exposure
                 or approval.invoice.grand_total != approval.requested_credit_amount
-                or current_exposure + approval.invoice.grand_total <= customer.credit_limit
             ):
                 raise ValidationError("تغير موقف العميل الائتماني منذ إنشاء الطلب؛ أعد مراجعة حد الائتمان قبل الاعتماد.")
 
