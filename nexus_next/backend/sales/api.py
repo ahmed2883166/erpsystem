@@ -580,6 +580,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             current_max_discount = max(invoice.lines.values_list("discount_percent", flat=True), default=Decimal("0"))
             credit_snapshot_matches = bool(
                 latest
+                and latest.status in (SalesInvoiceApproval.Status.PENDING, SalesInvoiceApproval.Status.APPROVED)
                 and latest.requested_credit_limit == customer.credit_limit
                 and latest.requested_credit_exposure == credit_exposure
                 and latest.requested_credit_amount == invoice.grand_total
