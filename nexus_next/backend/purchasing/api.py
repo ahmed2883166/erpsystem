@@ -99,8 +99,9 @@ class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("إدارة سياسة الشراء متاحة لمدير الشركة والمحاسب فقط.")
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        branch = serializer.validated_data["branch"]
+        branch = Branch.objects.select_for_update().get(pk=serializer.validated_data["branch"].pk)
         self._check_write(branch.company_id)
         if BranchPurchasePolicy.objects.filter(branch=branch).exists():
             raise ValidationError({"branch": "سياسة شراء هذا الفرع مسجلة بالفعل."})
@@ -116,8 +117,9 @@ class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
             },
         )
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        policy = serializer.instance
+        policy = BranchPurchasePolicy.objects.select_for_update().select_related("branch").get(pk=serializer.instance.pk)
         self._check_write(policy.branch.company_id)
         if not can_access_branch(self.request.user, policy.branch_id, policy.branch.company_id):
             raise PermissionDenied("لا تملك صلاحية إدارة سياسة هذا الفرع.")
@@ -807,6 +809,10 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             acceptance = data.get("service_acceptance")
             if acceptance and not _purchase_warehouse_accessible(self.request.user, acceptance.order.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
+            if acceptance:
+                _check_branch_purchase_policy(
+                    _purchase_branch_for_warehouse(acceptance.order.warehouse), data["supplier"],
+                )
         else:
             receipt = data["receipt"]
             if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
