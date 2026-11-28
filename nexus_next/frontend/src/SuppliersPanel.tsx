@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney } from "./formatters";
+import CustomExcelExportButton from "./CustomExcelExportButton";
 import { api, type Supplier } from "./api";
 
 type Props = { companyId: number | null };
@@ -86,6 +87,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     <section className="work-panel customers-panel">
       <div className="work-panel-head">
         <div><h2>سجل الموردين</h2><p>بيانات الموردين والرقم الضريبي وحدود الائتمان وشروط السداد.</p></div>
+        <CustomExcelExportButton resource="suppliers" companyId={companyId} />
         <button className="primary-button" type="button" disabled={!companyId} onClick={() => {
           if (showForm) { setShowForm(false); resetForm(); }
           else { resetForm(); setShowForm(true); }
