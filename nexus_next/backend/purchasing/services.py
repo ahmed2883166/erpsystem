@@ -1145,24 +1145,45 @@ def reverse_supplier_refund(refund_id, user, entry_date):
         )
 
     # عكس القيد يعيد الرصيد الدائن للمورد، لكنه يخرج النقدية من حساب الدفع.
-    # افحص الرصيد الدفتري في تاريخ العكس حتى لا ينتج رصيد خزينة/بنك سالب.
-    cash_totals = JournalLine.objects.filter(
-        account_id=document.payment_account_id,
-        entry__entry_date__lte=entry_date,
-        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-    ).aggregate(
-        debit=Sum("debit"), credit=Sum("credit"),
-    )
+    # اقفل سجل الخزينة وأعد بناء الرصيد حتى تاريخ العكس ثم اختبر كل حركة لاحقة؛
+    # لا يجوز تمويل العكس بإيداع مستقبلي أو ترك رصيد سالب مؤقتًا.
     from treasury.models import TreasuryAccount
-    opening_balance = TreasuryAccount.objects.filter(
+    treasury_account = TreasuryAccount.objects.select_for_update(of=("self",)).filter(
         company_id=document.company_id, account_id=document.payment_account_id,
-        opening_journal_entry__isnull=True,
-    ).aggregate(total=Sum("opening_balance"))["total"] or Decimal("0")
-    cash_balance = opening_balance + (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+    ).first()
+    if treasury_account is None or not treasury_account.is_active:
+        raise ValidationError("حساب الخزينة/البنك المرتبط بالاسترداد غير موجود أو موقوف.")
+    balance_movements = JournalLine.objects.filter(
+        account_id=document.payment_account_id,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).values("entry_id", "entry__entry_date").annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
+    cash_balance = (
+        Decimal("0") if treasury_account.opening_journal_entry_id
+        else treasury_account.opening_balance
+    )
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= entry_date:
+            cash_balance += change
+        else:
+            later_movements.append(change)
+
     if cash_balance < document.amount:
         raise ValidationError(
             f"لا يمكن عكس الاسترداد: رصيد حساب الخزينة/البنك في تاريخ العكس ({cash_balance}) أقل من المبلغ ({document.amount})."
         )
+    for change in later_movements:
+        cash_balance += change
+        if cash_balance < document.amount:
+            raise ValidationError(
+                "لا يمكن عكس الاسترداد بأثر رجعي؛ سيؤدي إلى رصيد خزينة/بنك سالب بعد حركة لاحقة مسجلة."
+            )
 
     try:
         reversal_entry = reverse_operational_journal(
