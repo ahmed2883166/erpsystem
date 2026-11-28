@@ -1108,21 +1108,41 @@ def post_asset_supplier_payment(payment_id, user=None):
     if treasury_account.currency_code != payment.company.base_currency.code:
         raise ValidationError("سداد فاتورة الأصل يتطلب حساب خزينة بعملة الشركة الأساسية.")
 
-    totals = cash.journal_lines.filter(
+    balance_movements = cash.journal_lines.filter(
         entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-    ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+    ).values("entry_id", "entry__entry_date").annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
     opening_balance = (
         Decimal("0") if treasury_account.opening_journal_entry_id
         else treasury_account.opening_balance
     )
-    available_balance = (
-        opening_balance + (totals["debit"] or Decimal("0"))
-        - (totals["credit"] or Decimal("0"))
-    )
+
+    # Validate the balance as of the payment date, then replay every later
+    # posted movement. A future deposit must not fund a backdated payment,
+    # and a later withdrawal must not leave the account overdrawn temporarily.
+    available_balance = opening_balance
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= payment.payment_date:
+            available_balance += change
+        else:
+            later_movements.append(change)
+
     if available_balance < payment.amount:
         raise ValidationError(
-            f"الرصيد المتاح في حساب الخزينة أو البنك غير كافٍ للسداد؛ المتاح {available_balance}."
+            f"الرصيد المتاح في تاريخ السداد ({available_balance}) أقل من مبلغ السداد ({payment.amount})."
         )
+    for change in later_movements:
+        available_balance += change
+        if available_balance < payment.amount:
+            raise ValidationError(
+                "لا يمكن ترحيل السداد بأثر رجعي؛ سيؤدي إلى رصيد خزينة/بنك سالب بعد حركة لاحقة مسجلة."
+            )
 
     entry = JournalEntry.objects.create(
         company=payment.company, branch=payment.branch, fiscal_year=year,
