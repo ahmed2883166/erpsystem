@@ -24,6 +24,13 @@ Status: verified by source inspection and existing test coverage; broader sales 
 - Regression tests added for cross-branch account use, global account use, cross-company cheque movement, unauthorized cheque/fund branch changes, company-wide account creation/update, and commitment scope changes.
 - Validation: CI, PostgreSQL backend suite, CodeQL and concurrent-user workflow are running on the latest audit commit; result pending.
 
+
+### Fixed-asset branch authorization
+- Confirmed: an unposted fixed-asset record could be updated to a different branch because the update path checked the user's role in the original company but did not authorize the target branch or prevent company reassignment.
+- Fix on this audit branch: enforce company immutability, company access, and target-branch access before updating an asset.
+- Regression test added: a branch-limited accountant cannot move an unposted asset into an inaccessible branch.
+- Validation: pending CI on the asset fix commit.
+
 ## Open review areas
 - Purchase -> partial receipt -> invoice -> payment -> GL and GRNI reconciliation.
 - Sales -> delivery -> invoice -> COGS -> collection -> customer statement and reports.
