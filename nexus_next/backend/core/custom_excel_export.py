@@ -163,6 +163,12 @@ class CustomExcelExportView(APIView):
         if branch_id:
             if resource not in ("bank", "employees", "inventory_balances", "inventory_movements"):
                 raise ValidationError({"branch": "تصفية الفرع غير متاحة لهذا القسم."})
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if branch_id <= 0:
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
             if not accessible_branches(request.user, company_id).filter(pk=branch_id).exists():
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             if resource == "inventory_balances":
