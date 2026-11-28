@@ -185,6 +185,8 @@ jobs:
         working-directory: nexus_next/frontend
         shell: pwsh
         run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm lockfile synchronization failed." }
           npm ci --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { throw "npm ci failed." }
           npm run build
