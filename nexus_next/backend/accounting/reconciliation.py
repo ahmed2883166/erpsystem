@@ -139,6 +139,7 @@ class SubledgerReconciliationView(APIView):
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
         from customers.models import Customer
         from suppliers.models import Supplier
+        from treasury.models import TreasuryTransaction
         from accounting.models import FxSubledgerRevaluation
         from inventory.models import StockBalance, StockMovementJournalLink
         from hr.models import Employee, PayrollComponent, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
@@ -575,9 +576,7 @@ class SubledgerReconciliationView(APIView):
                 ).filter(
                     Q(reversal_treasury_transaction__isnull=True)
                     | Q(reversal_treasury_transaction__journal_entry__isnull=True)
-                    | Q(reversal_treasury_transaction__status__in=(
-                        "draft", "void", "reversed",
-                    ))
+                    | ~Q(reversal_treasury_transaction__status=TreasuryTransaction.Status.POSTED)
                     | ~Q(reversal_treasury_transaction__journal_entry__status=JournalEntry.Status.POSTED)
                     | Q(reversal_journal_entry__isnull=True)
                     | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
