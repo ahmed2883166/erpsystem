@@ -1,34 +1,55 @@
-# Admrail Owner Toolkit (vendor-only)
+# Admrail Owner Toolkit (owner-only)
 
-This utility is for the software owner/vendor. It is separate from the customer-facing ERP interface and is not a customer employee tool.
+Admrail Owner Toolkit is a **standalone vendor/owner utility**. It is not embedded in the customer-facing ERP, is not exposed to company employees, and is not required for normal daily ERP use. The owner carries it on a removable drive, performs server/database setup or maintenance, then removes the toolkit.
 
-## Install
-1. Copy the entire `Admrail-Owner-Toolkit` folder beside the ERP application folder, or inside any subfolder under the ERP application root.
-2. Run `Start-Owner-Toolkit.cmd`.
-3. On first run, create a private owner PIN of at least 12 characters.
+## Agreed responsibility split
 
-The toolkit searches parent folders for an application root containing `backend\manage.py` and an embedded or virtual-environment Python runtime. It does not require `backend\.env` to create a diagnostics report.
+### Owner Toolkit — server and PostgreSQL administration
+The owner installs PostgreSQL manually and enters the PostgreSQL administrator password when prompted. The toolkit is responsible for the remaining technical database work:
 
-## Functions
-- Diagnostics: reports paths, runtime presence, PostgreSQL service/tool availability, and whether `.env` exists. It does not print secrets.
-- Encrypted backup: delegates to the application's existing encrypted backup workflow.
-- Restore: restores to a separately named NEW database. It does not overwrite the active database.
-- Migrations: runs Django checks and displays the migration plan, requires explicit `APPLY`, and first invokes the backup workflow.
-- Logs: lists toolkit and application log files.
+- Detect PostgreSQL services and trusted command-line tools, then test the supplied administrator credentials.
+- Create and administer the Admrail database and a separate least-privilege application login.
+- Configure the ERP database connection without overwriting unrelated application settings or printing credentials.
+- Run database migrations and post-setup checks only after explicit confirmation and appropriate backup safeguards.
+- Diagnose service, connection, storage, backup, and migration status.
+- Perform owner-level encrypted backup verification and restore to a separate database for maintenance/recovery.
+- Keep an auditable local operation log without recording passwords or secret values.
 
-## Safety boundaries
-- Database creation, rename, and deletion are available only through the separate PostgreSQL manager in menu option 6. Rename/deletion require the application to be stopped; deletion requires a verified encrypted backup and exact-name confirmation. The toolkit does not provide a database reset or silently switch the active database.
-- The PIN is a local deterrent and PBKDF2 hash, not a substitute for Windows ACLs, signed vendor releases, or administrator account security.
-- Backup requires a configured backup destination and initialized offline backup-encryption key.
-- Restore and migration functions are not considered production-validated until tested on the target Windows installation with a separate restore database.
-- Never distribute private owner signing keys or recovery secrets with this toolkit.
+The toolkit does **not** download or install PostgreSQL. It must not silently overwrite or delete an existing database.
 
+### Admrail ERP — company onboarding and daily operations
+The ERP remains responsible for customer-facing business setup and normal operations:
 
-## إدارة قواعد البيانات والمستخدمين
-- من القائمة الرئيسية اختر **6) إدارة قواعد البيانات ومستخدمي PostgreSQL** بعد تسجيل دخول مالك البرنامج.
-- تفتح أداة إدارة PostgreSQL المرفقة بالبرنامج، وتعرض أسماء قواعد البيانات الموجودة فعليًا على الخادم، مع تمييز قاعدة Admrail النشطة.
-- تشمل الأداة إنشاء قاعدة جديدة، تغيير اسم أي قاعدة محددة؛ وإذا كانت هي قاعدة Admrail النشطة يُحدّث ملف الاتصال تلقائيًا، حذف قاعدة غير نشطة بعد نسخة احتياطية مشفرة وتأكيد الاسم، وعرض قواعد البيانات.
-- من الخيار **12) اكتشاف وربط قاعدة بيانات موجودة تلقائيًا** تعرض الأداة قواعد PostgreSQL المكتشفة مع المالك والترميز والحجم، وتسمح بالاختيار من القائمة أو إدخال الاسم يدويًا. تفحص مخطط Django وخطة الترحيلات أولًا، وتحفظ نسخة مشفرة متحققًا منها، ولا تنفذ الترحيلات إلا بعد كتابة `APPLY`. القواعد ذات الجداول غير المتوافقة تُرفض دون تعديلها. هذا المسار مخصص لقواعد Admrail المتوافقة، وليس لاستيراد قواعد أنظمة ERP خارجية.
-- تتضمن إدارة أدوار PostgreSQL (المستخدمين): عرض الحسابات، إنشاء حساب دخول، تفعيل/إيقاف تسجيل الدخول، وتغيير كلمة المرور أو حذف حساب غير مستخدم بعد فحوصات الحماية.
-- كلمة مرور مسؤول PostgreSQL تُطلب داخل الأداة عند فتحها ولا تُحفظ في ملفات البرنامج. لا تُدخلها إلا على جهاز الخادم وبيد مالك البرنامج.
-- لا تعرض هذه الوظيفة داخل حسابات موظفي الشركات أو واجهة الويب.
+- First-time company profile and company settings.
+- Creation of the first/main ERP administrator account.
+- Branches and other company master data.
+- Routine in-app backup and restore actions exposed to authorized ERP administrators.
+- Showing the last backup result and relevant status to authorized users.
+
+Company profile creation and ERP administrator creation must not be duplicated in the owner toolkit. The toolkit prepares the server/database; the ERP onboarding flow creates the company and its first administrator.
+
+## Portable use
+1. Install PostgreSQL on the customer server yourself.
+2. Copy the toolkit to your removable drive and run `Start-Owner-Toolkit.cmd` as an authorized Windows administrator.
+3. Select the customer Admrail application folder when prompted.
+4. Create/use the private owner PIN, then provide the PostgreSQL administrator password only when a database operation requires it.
+5. Complete the database connection/setup checks and review the final report.
+6. Remove the toolkit drive after maintenance. Do not leave owner-only credentials or recovery material on the customer server.
+
+## Current implemented functions
+- Owner PIN using PBKDF2 and a local failed-attempt lockout.
+- Diagnostics without printing secrets.
+- PostgreSQL service/tool discovery.
+- Encrypted backup delegated to the ERP's existing backup workflow.
+- Restore to a separately named NEW database; the active database is not overwritten.
+- Django checks and migration plan, with explicit `APPLY` confirmation and backup-first behavior.
+- PostgreSQL database and login-role maintenance through the separate database manager.
+
+## Safety boundaries and remaining validation
+- Database rename/deletion requires the application to be stopped; deletion requires a verified encrypted backup and exact-name confirmation.
+- Restore is isolated to a new database and verifies public tables and Django migration history. Application login, reports, and accounting balances still require a separate acceptance test before any controlled switch.
+- The PIN is a local deterrent, not a substitute for Windows account security, ACLs, signed releases, or private distribution.
+- Backup requires a configured destination and initialized offline backup-encryption key.
+- Windows static checks are not a substitute for runtime testing on a clean Windows server with a real PostgreSQL installation.
+- Do not store customer credentials, database passwords, recovery keys, or private signing keys in source control or in the portable toolkit package.
+- The source currently resides in the public ERP repository branch until the owner moves it to a private repository. Do not put secrets or customer data on that branch.
