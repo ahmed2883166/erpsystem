@@ -1139,3 +1139,46 @@ class InventoryApiTests(APITestCase):
             f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}&branch={restricted_branch.pk}",
         )
         self.assertEqual(response.status_code, 403, response.data)
+
+    def test_reorder_suggestions_calculate_gap_from_available_stock(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="REORDER-001", name_ar="صنف إعادة طلب",
+        )
+        warehouse = self._warehouse("REORDER-WH")
+        WarehouseProductSetting.objects.create(
+            product=self.product, warehouse=warehouse, min_stock=Decimal("10"),
+        )
+        receipt = self._movement(
+            "REORDER-RCV", "receipt", destination=warehouse, quantity="3", cost="5",
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        report = self.client.get(
+            f"/api/inventory/balances/reorder-suggestions/?company={self.company.pk}",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        row = next(item for item in report.data["rows"] if item["product"] == self.product.pk)
+        self.assertEqual(row["on_hand"], "3.0000")
+        self.assertEqual(row["reorder_point"], "10.0000")
+        self.assertEqual(row["suggested_purchase_quantity"], "7.0000")
+        self.assertEqual(row["stock_status"], "reorder")
+
+    def test_pending_movements_report_lists_draft_stock_documents(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="PENDING-001", name_ar="صنف حركة معلقة",
+        )
+        warehouse = self._warehouse("PENDING-WH")
+        draft = self._movement(
+            "PENDING-MOVE-001", "receipt", destination=warehouse, quantity="2", cost="4",
+        )
+        self.assertEqual(draft.status_code, 201, draft.data)
+        report = self.client.get(
+            f"/api/inventory/movements/pending/?company={self.company.pk}",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["count"], 1)
+        self.assertEqual(report.data["results"][0]["movement_number"], "PENDING-MOVE-001")
