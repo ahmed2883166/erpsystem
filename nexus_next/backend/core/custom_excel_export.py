@@ -18,7 +18,7 @@ from customers.models import Customer
 from hr.models import Employee
 from inventory.models import Product, StockBalance, StockMovement
 from suppliers.models import Supplier
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 EXPORTS = {
@@ -59,6 +59,14 @@ EXPORTS = {
         "fields": ("code", "kind", "name_ar", "bank_name", "account_number", "iban",
                    "currency_code", "opening_balance", "branch", "is_active", "created_at"),
     },
+    "bank_transactions": {
+        "model": TreasuryTransaction,
+        "label": "البنك - الحركات المالية",
+        "fields": ("document_number", "transaction_date", "kind", "status", "amount",
+                   "transaction_currency", "transaction_amount", "exchange_rate", "carrying_amount",
+                   "source_account", "destination_account", "counter_account", "description",
+                   "reference", "cash_flow_category", "branch", "posted_at", "created_at"),
+    },
     "employees": {
         "model": Employee,
         "label": "الموظفون",
@@ -98,7 +106,13 @@ FIELD_LABELS = {
     "contract_end_date": "تاريخ نهاية العقد", "termination_date": "تاريخ انتهاء الخدمة",
     "basic_salary": "الراتب الأساسي", "currency": "العملة",
     "payment_method": "طريقة صرف الراتب", "bank_account": "الحساب البنكي",
-    "cost_center": "مركز التكلفة",
+    "cost_center": "مركز التكلفة", "document_number": "رقم المستند",
+    "transaction_date": "تاريخ الحركة", "amount": "المبلغ بالعملة الأساسية",
+    "transaction_currency": "عملة الحركة", "transaction_amount": "المبلغ بعملة الحركة",
+    "exchange_rate": "سعر الصرف", "carrying_amount": "القيمة الدفترية",
+    "source_account": "حساب المصدر", "destination_account": "حساب الوجهة",
+    "counter_account": "الحساب المقابل", "description": "البيان",
+    "reference": "المرجع", "cash_flow_category": "تصنيف التدفق النقدي",
 }
 
 
@@ -130,6 +144,8 @@ def _queryset_for(resource, company_id, user):
                 destination_scope |= Q(destination_warehouse__branch__isnull=True)
             qs = qs.filter(source_scope & destination_scope)
     if resource == "employees":
+        qs = qs.filter(branch__in=accessible_branches(user, company_id))
+    elif resource == "bank_transactions":
         qs = qs.filter(branch__in=accessible_branches(user, company_id))
     elif resource == "bank":
         branches = accessible_branches(user, company_id)
@@ -192,7 +208,7 @@ class CustomExcelExportView(APIView):
         qs = _queryset_for(resource, company_id, request.user)
         branch_id = request.query_params.get("branch")
         if branch_id:
-            if resource not in ("bank", "employees", "inventory_balances", "inventory_movements"):
+            if resource not in ("bank", "bank_transactions", "employees", "inventory_balances", "inventory_movements"):
                 raise ValidationError({"branch": "تصفية الفرع غير متاحة لهذا القسم."})
             try:
                 branch_id = int(branch_id)
