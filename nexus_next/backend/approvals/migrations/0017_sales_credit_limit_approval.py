@@ -110,5 +110,13 @@ class Migration(migrations.Migration):
             name="requested_credit_amount",
             field=models.DecimalField(blank=True, decimal_places=4, max_digits=20, null=True),
         ),
+        migrations.AlterModelOptions(
+            name="salesinvoiceapproval",
+            options={
+                "ordering": ("status", "-requested_at"),
+                "verbose_name": "طلب موافقة فاتورة مبيعات",
+                "verbose_name_plural": "طلبات موافقات فواتير المبيعات",
+            },
+        ),
         migrations.RunPython(update_approval_guard, restore_approval_guard),
     ]
