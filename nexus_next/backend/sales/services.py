@@ -15,6 +15,7 @@ from companies.models import ExchangeRate, FiscalYear
 from inventory.models import StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
+from accounting.fx_subledger_services import open_fx_invoice_balances
 
 from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
@@ -22,6 +23,40 @@ from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchA
 def _account(company, role):
     """استخراج الحساب التفصيلي المرتبط بدور المبيعات المطلوب."""
     return get_account_for_role(company, role)
+
+
+def customer_credit_exposure(customer, *, as_of=None):
+    """احسب الذمم المدينة المفتوحة بعملة الشركة الأساسية في تاريخ محدد."""
+    as_of = as_of or timezone.localdate()
+    invoices = SalesInvoice.objects.filter(
+        customer=customer, status=SalesInvoice.Status.POSTED, invoice_date__lte=as_of,
+    ).select_related("company", "transaction_currency")
+    exposure = Decimal("0")
+    for invoice in invoices:
+        if invoice.transaction_currency_id:
+            _, _, carrying = open_fx_invoice_balances(
+                invoice, direction="receivable", as_of=as_of,
+            )
+            exposure += max(carrying, Decimal("0"))
+            continue
+        receipts = invoice.receipts.filter(receipt_date__lte=as_of).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=as_of)
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        allocations = invoice.receipt_batch_allocations.filter(
+            allocation_date__lte=as_of, batch__receipt_date__lte=as_of,
+        ).filter(
+            Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+            | Q(batch__status=CustomerReceiptBatch.Status.REVERSED,
+                batch__reversal_journal_entry__entry_date__gt=as_of)
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        returns = invoice.returns.filter(return_date__lte=as_of).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+        ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+        exposure += max(invoice.grand_total - receipts - allocations - returns, Decimal("0"))
+    return exposure.quantize(Decimal("0.0001"))
 
 def _branch_and_year(delivery, entry_date):
     """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
@@ -97,7 +132,13 @@ def post_sales_invoice(invoice_id, user):
         invoice.invoice_approval_limit is not None
         and invoice.grand_total > invoice.invoice_approval_limit
     )
-    if discount_exceeded or amount_exceeded:
+    customer = invoice.customer.__class__.objects.select_for_update().get(pk=invoice.customer_id)
+    credit_exposure = customer_credit_exposure(customer)
+    credit_exceeded = (
+        customer.credit_limit > 0
+        and credit_exposure + invoice.grand_total > customer.credit_limit
+    )
+    if discount_exceeded or amount_exceeded or credit_exceeded:
         from approvals.models import SalesInvoiceApproval
         approval = invoice.approval_requests.order_by("-requested_at", "-pk").first()
         current_max_discount = max(
@@ -111,8 +152,18 @@ def post_sales_invoice(invoice_id, user):
             or approval.requested_max_discount_percent != current_max_discount
             or approval.requested_invoice_limit != invoice.invoice_approval_limit
             or approval.requested_lines_snapshot != invoice_discount_snapshot(invoice)
+            or (credit_exceeded and (
+                approval.requested_credit_limit != customer.credit_limit
+                or approval.requested_credit_exposure != credit_exposure
+                or approval.requested_credit_amount != invoice.grand_total
+            ))
         ):
-            raise ValidationError("تجاوزت الفاتورة حد الخصم أو قيمة الفاتورة المعتمد؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.")
+            message = (
+                "تجاوزت الفاتورة حد الائتمان؛ يلزم اعتماد مدير الشركة لآخر موقف ائتماني قبل الترحيل."
+                if credit_exceeded else
+                "تجاوزت الفاتورة حد الخصم أو قيمة الفاتورة المعتمد؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل."
+            )
+            raise ValidationError(message)
     delivery = invoice.delivery
     lines = list(invoice.lines.select_related("delivery_line", "product"))
     if not lines:
