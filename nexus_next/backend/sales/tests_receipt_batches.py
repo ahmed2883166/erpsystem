@@ -188,6 +188,44 @@ class CustomerReceiptBatchTests(APITestCase):
             credit = sum((line.credit for line in lines), Decimal("0"))
             self.assertEqual(debit, credit, entry.entry_number)
 
+    def test_direct_receipt_cannot_overcollect_after_batch_allocation(self):
+        invoice_id = self._create_posted_invoice("BATCH-INV-DIRECT-OVER")
+        batch = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "receipt_number": "BATCH-RC-DIRECT-OVER",
+            "receipt_date": "2026-03-11",
+            "method": "cash",
+            "amount": "100",
+            "allocations": [{"invoice": invoice_id, "amount": "100"}],
+        }, format="json")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        posted_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_batch.status_code, 200, posted_batch.data)
+
+        direct = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "invoice": invoice_id,
+            "receipt_number": "RC-DIRECT-OVER-BATCH",
+            "receipt_date": "2026-03-12",
+            "method": "cash",
+            "amount": "101",
+        }, format="json")
+        self.assertEqual(direct.status_code, 201, direct.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/receipts/{direct.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("100.0000", str(rejected.data))
+        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/")
+        self.assertEqual(invoice.status_code, 200, invoice.data)
+        self.assertEqual(invoice.data["balance_due"], "100.0000")
+
+
     def test_receipt_batch_rejects_allocations_above_invoice_balance(self):
         invoice_id = self._create_posted_invoice("BATCH-INV-OVER")
         created = self.client.post("/api/sales-documents/receipt-batches/", {
