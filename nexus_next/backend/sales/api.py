@@ -1676,8 +1676,8 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         treasury_account = TreasuryAccount.objects.select_for_update(of=("self",)).filter(
             company_id=receipt.company_id, account_id=cash_account_id,
         ).first()
-        if treasury_account is None or not treasury_account.is_active:
-            raise ValidationError("حساب الخزينة/البنك المرتبط بسند القبض غير موجود أو موقوف.")
+        if treasury_account is not None and not treasury_account.is_active:
+            raise ValidationError("حساب الخزينة/البنك المرتبط بسند القبض موقوف.")
         balance_movements = JournalLine.objects.filter(
             account_id=cash_account_id,
             entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
@@ -1685,7 +1685,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             debit=Sum("debit"), credit=Sum("credit"),
         ).order_by("entry__entry_date", "entry_id")
         cash_balance = (
-            Decimal("0") if treasury_account.opening_journal_entry_id
+            Decimal("0") if treasury_account is None or treasury_account.opening_journal_entry_id
             else treasury_account.opening_balance
         )
         later_movements = []
