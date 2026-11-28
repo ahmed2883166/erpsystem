@@ -81,6 +81,7 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
         self._check_related_scope(serializer.validated_data)
         serializer.save()
 
+    @transaction.atomic
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         company = serializer.validated_data.get("company", serializer.instance.company)
