@@ -51,6 +51,13 @@ def post_customer_refund(refund_id, user):
         raise ValidationError("تاريخ المردود لا يجوز أن يسبق تاريخ سند القبض.")
     if not refund.amount.is_finite() or refund.amount <= 0 or refund.amount >= Decimal("10000000000000000") or refund.amount != refund.amount.quantize(Decimal("0.0001")):
         raise ValidationError("مبلغ المردود يجب أن يكون موجبًا وبحد أقصى 4 منازل عشرية.")
+    if CustomerReceiptBatchAllocation.objects.filter(
+        batch=batch, allocation_date__gt=refund.refund_date,
+    ).exists() or CustomerRefund.objects.filter(
+        source_receipt_batch=batch, status=CustomerRefund.Status.POSTED,
+        refund_date__gt=refund.refund_date,
+    ).exclude(pk=refund.pk).exists():
+        raise ValidationError("لا يمكن ترحيل مردود بتاريخ سابق لحركة تخصيص أو مردود أحدث على الدفعة؛ راجع ترتيب الحركات.")
     available = _available_advance(batch, refund.refund_date)
     if refund.amount > available:
         raise ValidationError(f"مبلغ المردود يتجاوز الدفعة المقدمة غير المخصصة المتاحة ({available}).")
