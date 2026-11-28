@@ -16,7 +16,7 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting, WarehouseStatusAudit
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
@@ -168,6 +168,36 @@ class WarehouseViewSet(CompanyScopedViewSet):
             default_branch = _default_branch(company.pk)
             if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        warehouse = serializer.instance
+        company = serializer.validated_data.get("company", warehouse.company)
+        branch = serializer.validated_data.get("branch", warehouse.branch)
+        if company.pk != warehouse.company_id:
+            raise ValidationError("لا يمكن نقل مخزن قائم إلى شركة أخرى.")
+        self._check_company_write(company.pk)
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        if branch is None and (not self.request.user.is_superuser or is_platform_owner(self.request.user)):
+            default_branch = _default_branch(company.pk)
+            if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
+                raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
+        previous_active = warehouse.is_active
+        next_active = serializer.validated_data.get("is_active", previous_active)
+        if previous_active != next_active:
+            if not has_company_role(self.request.user, company.pk, ("admin",)):
+                raise PermissionDenied("إيقاف المخزن أو إعادة فتحه متاح لمدير الشركة فقط.")
+            serializer.save()
+            WarehouseStatusAudit.objects.create(
+                warehouse=warehouse,
+                previous_is_active=previous_active,
+                new_is_active=next_active,
+                reason=str(self.request.data.get("status_change_reason", "")).strip(),
+                changed_by=self.request.user,
+            )
+            return
+        serializer.save()
 
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
