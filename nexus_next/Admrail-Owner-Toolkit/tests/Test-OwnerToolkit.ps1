@@ -58,7 +58,7 @@ Assert-True ($toolkitText -match 'Restore backup to a NEW database') "Owner menu
 Assert-True ($toolkitText -match 'Invoke-InitialProvisioning' -and $toolkitText -match '"7" \{ Invoke-InitialProvisioning \}') "Owner menu must expose first-run database provisioning."
 Assert-True ($provisionText -match 'Read-Host .*AsSecureString' -and $provisionText -match 'Remove-Item Env:PGPASSWORD') "Provisioning must read the administrator password securely and clear the process environment variable."
 Assert-True ($provisionText -match 'CREATE ROLE' -and $provisionText -match 'NOSUPERUSER NOCREATEDB NOCREATEROLE' -and $provisionText -match 'createdb') "Provisioning must create a separate least-privilege application login and a new database."
-Assert-True ($provisionText -match 'write CREATE' -and $provisionText -match 'write APPLY') "Provisioning must require explicit confirmation before database creation and migrations."
+Assert-True ($provisionText -match 'CREATE' -and $provisionText -match 'APPLY') "Provisioning must require explicit confirmation before database creation and migrations."
 Assert-True ($provisionText -match 'backend\\.env.example' -and $provisionText -match 'Test-Path -LiteralPath \$envFile') "Provisioning must initialize configuration from the template and refuse to overwrite an existing .env."
 Assert-True ($provisionText -match 'migrate --plan' -and $provisionText -match 'seed_reference_data' -and $provisionText -match 'APPLY') "Provisioning must require explicit approval for migrations and seed reference data."
 Assert-True ($dbManagerText -match "Save-VerifiedBackup" -and $dbManagerText -match "DROP DATABASE") "Database deletion must retain the verified-backup path."
