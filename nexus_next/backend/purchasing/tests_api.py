@@ -1712,6 +1712,7 @@ class PurchasingWorkflowTests(APITestCase):
         posted_payment = self.client.post(f"/api/purchasing/payments/{payment_id}/post/", {}, format="json")
         self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
         original_entry_id = posted_payment.data["journal_entry"]
+        bank_mirror = TreasuryTransaction.objects.get(journal_entry_id=original_entry_id)
 
         reversed_response = self.client.post(
             f"/api/purchasing/payments/{payment_id}/reverse/",
@@ -1725,6 +1726,9 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(original.status, JournalEntry.Status.REVERSED)
         self.assertEqual(reversal.reversal_of_id, original.pk)
         self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        bank_mirror.refresh_from_db()
+        self.assertEqual(bank_mirror.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(bank_mirror.reversal_journal_entry_id, reversal.pk)
         invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
         self.assertEqual(invoice_after["paid_total"], "0")
         self.assertEqual(invoice_after["balance_due"], "228.0000")
@@ -1989,6 +1993,10 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
         self.assertEqual(posted_refund.data["status"], "posted")
+        refund_bank_mirror = TreasuryTransaction.objects.get(
+            journal_entry_id=posted_refund.data["journal_entry"],
+        )
+        self.assertEqual(refund_bank_mirror.status, TreasuryTransaction.Status.POSTED)
         self.assertTrue(JournalLine.objects.filter(
             entry_id=posted_refund.data["journal_entry"], account=bank, debit=Decimal("50.0000"),
         ).exists())
@@ -2011,6 +2019,12 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(
             JournalEntry.objects.get(pk=posted_refund.data["journal_entry"]).status,
             JournalEntry.Status.REVERSED,
+        )
+        refund_bank_mirror.refresh_from_db()
+        self.assertEqual(refund_bank_mirror.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(
+            refund_bank_mirror.reversal_journal_entry_id,
+            reversed_refund.data["reversal_journal_entry"],
         )
         self.assertEqual(
             supplier_credit_balance(self.company.pk, self.supplier.pk, date(2026, 3, 14)),
