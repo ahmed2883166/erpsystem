@@ -15,7 +15,7 @@ from companies.models import ExchangeRate, FiscalYear
 from inventory.models import StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
-from accounting.fx_subledger_services import open_fx_invoice_balances
+from customers.models import Customer
 
 from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
@@ -34,6 +34,7 @@ def customer_credit_exposure(customer, *, as_of=None):
     exposure = Decimal("0")
     for invoice in invoices:
         if invoice.transaction_currency_id:
+            from accounting.fx_subledger_services import open_fx_invoice_balances
             _, _, carrying = open_fx_invoice_balances(
                 invoice, direction="receivable", as_of=as_of,
             )
@@ -132,7 +133,7 @@ def post_sales_invoice(invoice_id, user):
         invoice.invoice_approval_limit is not None
         and invoice.grand_total > invoice.invoice_approval_limit
     )
-    customer = invoice.customer.__class__.objects.select_for_update().get(pk=invoice.customer_id)
+    customer = Customer.objects.select_for_update().get(pk=invoice.customer_id)
     credit_exposure = customer_credit_exposure(customer)
     credit_exceeded = (
         customer.credit_limit > 0
