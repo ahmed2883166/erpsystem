@@ -9,7 +9,7 @@ from approvals.services import refresh_financial_approval
 
 from accounting.models import ChartOfAccount, CostCenter, FxSubledgerRevaluation, JournalEntry, TaxCode
 from companies.access import resolve_warehouse_branch
-from companies.models import ExchangeRate
+from companies.models import Branch, ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
@@ -1524,6 +1524,7 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
 
 
 class BranchPurchasePolicySerializer(serializers.ModelSerializer):
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all())
     branch_id = serializers.IntegerField(source="branch.id", read_only=True)
     branch_name = serializers.CharField(source="branch.name_ar", read_only=True)
     allowed_supplier_ids = serializers.PrimaryKeyRelatedField(
@@ -1535,7 +1536,7 @@ class BranchPurchasePolicySerializer(serializers.ModelSerializer):
         from .models import BranchPurchasePolicy
         model = BranchPurchasePolicy
         fields = (
-            "id", "branch_id", "branch_name", "purchase_enabled",
+            "id", "branch", "branch_id", "branch_name", "purchase_enabled",
             "restrict_suppliers", "allowed_supplier_ids", "updated_at",
         )
         read_only_fields = ("id", "branch_id", "branch_name", "updated_at")
