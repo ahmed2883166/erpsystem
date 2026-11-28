@@ -543,6 +543,69 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(report.data["sales"]["by_code"][0]["tax_code"], "VAT-STD-14")
         self.assertEqual(report.data["sales"]["by_category"][0]["category"], "standard")
 
+    def test_vat_return_preserves_sales_return_and_reversal_in_their_posting_periods(self):
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-REV-14", name_ar="ضريبة قياسية",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=True,
+        )
+        delivery_id, delivery_line_id = self._create_delivery("DEL-VAT-REVERSAL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-VAT-REVERSAL", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": delivery_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-VAT-REVERSAL", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+
+        def vat_report(start, end):
+            response = self.client.get(
+                f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+                f"&date_from={start}&date_to={end}"
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        # The original return continues to reduce output tax in its original period.
+        original_period = vat_report("2026-03-10", "2026-03-12")
+        self.assertEqual(original_period["output_tax"], "14.0000")
+        self.assertEqual(original_period["sales"]["taxable_base"], "100.0000")
+
+        # A return-only period reports the negative taxable base and output VAT.
+        return_period = vat_report("2026-03-12", "2026-03-12")
+        self.assertEqual(return_period["output_tax"], "-14.0000")
+        self.assertEqual(return_period["sales"]["taxable_base"], "-100.0000")
+
+        # The posted reversal restores the VAT in the period in which it was posted.
+        reversal_period = vat_report("2026-03-14", "2026-03-14")
+        self.assertEqual(reversal_period["output_tax"], "14.0000")
+        self.assertEqual(reversal_period["sales"]["taxable_base"], "100.0000")
+
+        # Across both periods, return and reversal cancel without changing original sales VAT.
+        combined_period = vat_report("2026-03-10", "2026-03-14")
+        self.assertEqual(combined_period["output_tax"], "28.0000")
+        self.assertEqual(combined_period["sales"]["taxable_base"], "200.0000")
+
+
     def test_sales_invoice_uses_configured_tax_code_rate_and_validity(self):
         delivery_id, line_id = self._create_delivery("DEL-TAX-1")
         code = TaxCode.objects.create(
