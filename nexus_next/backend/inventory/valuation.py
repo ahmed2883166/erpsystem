@@ -221,8 +221,10 @@ def reverse_inventory_valuation_assessment(assessment_id, user, entry_date):
     reversal = reverse_operational_journal(
         assessment.journal_entry_id, user, entry_date, JournalEntry.Source.INVENTORY,
     )
-    assessment.reversal_journal_entry = reversal
-    assessment.status = InventoryValuationAssessment.Status.REVERSED
-    assessment.reversed_at = timezone.now()
-    assessment.save(update_fields=("reversal_journal_entry", "status", "reversed_at"))
+    InventoryValuationAssessment.objects.filter(pk=assessment.pk).update(
+        reversal_journal_entry=reversal,
+        status=InventoryValuationAssessment.Status.REVERSED,
+        reversed_at=timezone.now(),
+    )
+    assessment.refresh_from_db()
     return assessment
