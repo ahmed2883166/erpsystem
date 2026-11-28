@@ -84,9 +84,9 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     def _manager(self, approval):
         """تنفيذ وظيفة _manager ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if not has_company_role(self.request.user, approval.company_id, ("admin",)):
-            raise PermissionDenied("اعتماد الخصومات متاح لمدير الشركة فقط.")
+            raise PermissionDenied("اعتماد استثناءات فواتير المبيعات متاح لمدير الشركة فقط.")
         if approval.requested_by_id == self.request.user.pk:
-            raise PermissionDenied("لا يجوز اعتماد طلب الخصم بواسطة منشئه.")
+            raise PermissionDenied("لا يجوز اعتماد طلب الفاتورة بواسطة منشئه.")
         if approval.status != SalesInvoiceApproval.Status.PENDING:
             raise ValidationError("تم اتخاذ قرار على هذا الطلب بالفعل.")
         if approval.invoice.status != "draft":
