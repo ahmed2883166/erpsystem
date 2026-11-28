@@ -82,12 +82,22 @@ def _queryset_for(resource, company_id, user):
         qs = spec["model"].objects.filter(warehouse__company_id=company_id)
     else:
         qs = spec["model"].objects.filter(company_id=company_id)
-    if resource == "inventory_movements":
+    if resource in ("inventory_movements", "inventory_balances"):
         from django.db.models import Q
         branches = accessible_branches(user, company_id)
-        qs = qs.filter(Q(source_warehouse__branch__in=branches) | Q(destination_warehouse__branch__in=branches))
-    if resource == "inventory_balances":
-        qs = qs.filter(warehouse__branch__in=accessible_branches(user, company_id))
+        company_wide = has_company_wide_branch_access(user, company_id)
+        if resource == "inventory_balances":
+            scope = Q(warehouse__branch__in=branches)
+            if company_wide:
+                scope |= Q(warehouse__branch__isnull=True)
+            qs = qs.filter(scope)
+        else:
+            source_scope = Q(source_warehouse__branch__in=branches)
+            destination_scope = Q(destination_warehouse__branch__in=branches)
+            if company_wide:
+                source_scope |= Q(source_warehouse__branch__isnull=True)
+                destination_scope |= Q(destination_warehouse__branch__isnull=True)
+            qs = qs.filter(source_scope & destination_scope)
     if resource == "employees":
         qs = qs.filter(branch__in=accessible_branches(user, company_id))
     elif resource == "bank":
