@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounting.models import JournalEntry
+from accounting.models import ChartOfAccount, JournalEntry
 from sales.tests_api import SalesWorkflowTests
 from treasury.models import TreasuryAccount, TreasuryTransaction
 
@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount, TreasuryTransaction
 class CustomerRefundApiTests(APITestCase):
     def setUp(self):
         SalesWorkflowTests.setUp(self)
-        cash = self.company.accounts.get(code="1005")
+        cash = ChartOfAccount.objects.get(company=self.company, code="1005")
         self.treasury = TreasuryAccount.objects.create(
             company=self.company, branch=self.branch, account=cash,
             kind=TreasuryAccount.Kind.CASH, code="CASH-CUSTOMER-REFUND",
