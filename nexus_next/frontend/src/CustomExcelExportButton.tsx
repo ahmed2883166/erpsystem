@@ -4,7 +4,7 @@ type ExportField = { key: string; label: string };
 type ExportPreview = { headers: string[]; total_rows: number; preview_rows: unknown[][] };
 
 type Props = {
-  resource: "inventory" | "inventory_balances" | "inventory_movements" | "customers" | "suppliers" | "bank" | "employees";
+  resource: "inventory" | "inventory_balances" | "inventory_movements" | "customers" | "suppliers" | "bank" | "bank_transactions" | "employees";
   companyId: number | null;
   branchId?: number | null;
 };
@@ -16,6 +16,7 @@ const resourceNames: Record<Props["resource"], string> = {
   customers: "العملاء",
   suppliers: "الموردون",
   bank: "البنك والخزائن",
+  bank_transactions: "حركات البنك والخزينة",
   employees: "الموظفون",
 };
 
