@@ -747,8 +747,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "description": f"رد مبلغ للعميل من الدفعة المقدمة {refund.source_receipt_batch.receipt_number}",
                 "debit": refund.amount, "credit": Decimal("0"), "sort": 2,
             })
-            if refund.status == CustomerRefund.Status.REVERSED and (
-                refund.reversal_date or refund.reversal_journal_entry_id
+            if (
+                refund.status == CustomerRefund.Status.REVERSED
+                and refund.reversal_journal_entry_id
+                and refund.reversal_journal_entry.status == JournalEntry.Status.POSTED
             ):
                 events.append({
                     "date": refund.reversal_date or refund.reversal_journal_entry.entry_date,
@@ -1001,7 +1003,15 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 source_receipt_batch__in=advance_batches, refund_date__lte=as_of,
             ).filter(
                 Q(status=CustomerRefund.Status.POSTED)
-                | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
+                | (
+                    Q(status=CustomerRefund.Status.REVERSED)
+                    & (
+                        Q(reversal_date__gt=as_of)
+                        | Q(reversal_date__isnull=True)
+                        | Q(reversal_journal_entry__isnull=True)
+                        | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
+                    )
+                )
             ).values("source_receipt_batch_id").annotate(total=Sum("amount"))
         }
         for batch in advance_batches:
