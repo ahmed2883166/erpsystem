@@ -1952,6 +1952,73 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
 
+    def test_customer_receipt_reversal_rejects_intermediate_future_overdraft(self):
+        from treasury.models import TreasuryAccount
+
+        delivery_id, line_id = self._create_delivery("DEL-RECEIPT-FUTURE-REV")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-RECEIPT-FUTURE-REV",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        bank = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-RECEIPT-FUTURE-REV",
+            name_ar="بنك اختبار عكس التحصيل", opening_balance=Decimal("0"),
+        )
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": invoice.data["id"], "receipt_number": "RC-FUTURE-REV",
+            "receipt_date": "2026-03-11", "method": "bank",
+            "payment_account": bank.pk, "amount": "100",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+
+        for number, movement_date, debit, credit, nature in (
+            ("RECEIPT-FUTURE-OUT", date(2026, 3, 13), "0", "150", ChartOfAccount.Nature.EXPENSE),
+            ("RECEIPT-FUTURE-IN", date(2026, 3, 14), "100", "0", ChartOfAccount.Nature.REVENUE),
+        ):
+            offset = ChartOfAccount.objects.create(
+                company=self.company, code=f"RC-{number}",
+                name_ar="مقابل حركة اختبار", nature=nature,
+            )
+            entry = JournalEntry.objects.create(
+                company=self.company, branch=self.branch,
+                fiscal_year=FiscalYear.objects.get(
+                    company=self.company, start_date__lte=movement_date, end_date__gte=movement_date,
+                ),
+                entry_number=number, entry_date=movement_date,
+                description="حركة مستقبلية لاختبار عكس سند قبض العميل",
+            )
+            JournalLine.objects.create(
+                entry=entry, account=bank, debit=Decimal(debit), credit=Decimal(credit),
+            )
+            JournalLine.objects.create(
+                entry=entry, account=offset, debit=Decimal(credit), credit=Decimal(debit),
+            )
+            post_journal(entry.pk, actor=self.user)
+
+        journal_count = JournalEntry.objects.count()
+        rejected = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("حركة لاحقة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_customer_default_discount_and_lower_approval_limit_apply_to_new_invoice(self):
         self.customer.default_discount_percent = Decimal("5")
         self.customer.discount_approval_limit = Decimal("3")
