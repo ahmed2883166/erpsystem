@@ -44,6 +44,10 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [profileEmail, setProfileEmail] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [companyNameEn, setCompanyNameEn] = useState("");
+  const [managerUsername, setManagerUsername] = useState("");
+  const [managerDisplayName, setManagerDisplayName] = useState("");
+  const [managerEmail, setManagerEmail] = useState("");
+  const [managerPassword, setManagerPassword] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
   const [enabledActivities, setEnabledActivities] = useState<NonNullable<Company["activity"]>[]>(["commercial"]);
@@ -137,28 +141,38 @@ const refreshStructure = async (id: number) => {
   // إنشاء شركة جديدة وإرسال بيانات النشاط والعملة والبلد إلى الخادم.
 const createCompany = async (event: FormEvent) => {
     event.preventDefault();
-    if (!companyCode.trim() || !companyName.trim() || !currencyId) return;
+    if (!companyCode.trim() || !companyName.trim() || !currencyId ||
+        !managerUsername.trim() || !managerDisplayName.trim() || !managerEmail.trim() || managerPassword.length < 12) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const company = await api.createCompany({
-        code: companyCode.trim().toUpperCase(),
-        name_ar: companyName.trim(),
-        name_en: companyNameEn.trim(),
-        country,
-        activity,
-        activities: enabledActivities.includes(activity) ? enabledActivities : [...enabledActivities, activity],
-        base_currency: Number(currencyId),
-        tax_registration_number: taxNumber.trim(),
-        address: address.trim(),
-        phone: phone.trim(),
-        email: email.trim(),
-        is_active: true,
+      const result = await api.createCompanyWithAdmin({
+        company: {
+          code: companyCode.trim().toUpperCase(),
+          name_ar: companyName.trim(),
+          name_en: companyNameEn.trim(),
+          country,
+          activity,
+          activities: enabledActivities.includes(activity) ? enabledActivities : [...enabledActivities, activity],
+          base_currency: Number(currencyId),
+          tax_registration_number: taxNumber.trim(),
+          address: address.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          is_active: true,
+        },
+        manager: {
+          username: managerUsername.trim(),
+          display_name: managerDisplayName.trim(),
+          email: managerEmail.trim(),
+          password: managerPassword,
+        },
       });
-      onCompanyCreated(company);
-      setNotice("تم إنشاء الشركة والمركز الرئيسي تلقائيًا. أكمل إعداد السنة المالية، ويمكنك إضافة فروع أخرى لاحقًا.");
+      onCompanyCreated(result.company);
+      setNotice("تم إنشاء الشركة والمركز الرئيسي وحساب مدير الشركة وربط صلاحياته بنجاح. أكمل إعداد السنة المالية.");
       setCompanyCode(""); setCompanyName(""); setCompanyNameEn(""); setTaxNumber(""); setAddress(""); setPhone(""); setEmail("");
+      setManagerUsername(""); setManagerDisplayName(""); setManagerEmail(""); setManagerPassword("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة. تأكد من تسجيل الدخول بحساب مسؤول النظام.");
+      setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة ومديرها. تأكد من صلاحية مالك المنصة وصحة بيانات المدير.");
     } finally { setBusy(false); }
   };
 
@@ -324,7 +338,7 @@ const createYear = async (event: FormEvent) => {
 
     {!companies.length && <div className="setup-intro">
       <strong>مرحبًا بك في NEXUS ERP</strong>
-      <p>ابدأ بإدخال بيانات شركتك لأول مرة. بعد الحفظ سيتم إنشاء المركز الرئيسي تلقائيًا. بعد ذلك يعيّن مسؤول النظام مدير الشركة، ويمكن إضافة فروع أخرى لاحقًا.</p>
+      <p>أدخل بيانات الشركة وبيانات مديرها في نفس الخطوة. سيتم إنشاء الشركة والمركز الرئيسي وحساب المدير وربط صلاحياته معًا؛ ويمكن إضافة فروع أخرى لاحقًا.</p>
     </div>}
 
     {!companyId && <form className="journal-form" onSubmit={createCompany}>
@@ -341,9 +355,14 @@ const createYear = async (event: FormEvent) => {
       <label>الهاتف<input maxLength={40} value={phone} onChange={e => setPhone(e.target.value)} /></label>
       <label>البريد الإلكتروني<input type="email" maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label className="form-wide">العنوان<textarea rows={2} value={address} onChange={e => setAddress(e.target.value)} /></label>
+      <h3 className="form-wide">بيانات مدير الشركة الأول</h3>
+      <label>اسم المدير<input required maxLength={150} value={managerDisplayName} onChange={e => setManagerDisplayName(e.target.value)} placeholder="الاسم الكامل" /></label>
+      <label>اسم المستخدم<input required maxLength={150} value={managerUsername} onChange={e => setManagerUsername(e.target.value)} autoComplete="username" /></label>
+      <label>البريد الإلكتروني<input required type="email" maxLength={254} value={managerEmail} onChange={e => setManagerEmail(e.target.value)} autoComplete="email" /></label>
+      <label>كلمة مرور المدير<input required type="password" minLength={12} maxLength={256} value={managerPassword} onChange={e => setManagerPassword(e.target.value)} autoComplete="new-password" /><small>12 حرفًا على الأقل وفق سياسة كلمات المرور.</small></label>
       {activity === "industrial" && <p className="asset-report-note form-wide">النشاط الصناعي هنا لتجهيز الحسابات والمخزون فقط؛ أوامر الإنتاج وقوائم المواد وتحويل الخام إلى منتج نهائي غير مفعّلة في هذه المرحلة.</p>}
-      <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || currencyLoading || !currencies.length || !currencyId}>{busy ? "جارٍ إنشاء الشركة…" : "إنشاء الشركة والانتقال للخطوة التالية"}</button></div>
-      <p className="asset-report-note form-wide">إنشاء الشركة متاح لحساب مسؤول النظام الأول الذي تم إنشاؤه أثناء تشغيل البرنامج لأول مرة. لا يتم إنشاء نسب ضريبية قانونية تلقائيًا.</p>
+      <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || currencyLoading || !currencies.length || !currencyId || !managerUsername.trim() || !managerDisplayName.trim() || !managerEmail.trim() || managerPassword.length < 12}>{busy ? "جارٍ إنشاء الشركة والمدير…" : "إنشاء الشركة ومديرها"}</button></div>
+      <p className="asset-report-note form-wide">إنشاء الشركة ومديرها متاح لحساب مالك المنصة الأول. يتم إنشاء الشركة والفرع الرئيسي وحساب المدير وعضويته في عملية واحدة؛ لا يتم إنشاء نسب ضريبية قانونية تلقائيًا.</p>
     </form>}
 
     {selectedCompany && <>
