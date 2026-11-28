@@ -77,7 +77,7 @@ class CustomExcelExportApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["total_rows"], 1)
-        self.assertEqual(response.data["headers"], ["كود", "اسم عربي"])
+        self.assertEqual(response.data["headers"], [_field_label(Customer, "code"), _field_label(Customer, "name_ar")])
         self.assertEqual(response.data["preview_rows"], [["C-001", "عميل ظاهر"]])
         self.assertEqual(Customer.objects.count(), before)
 
@@ -93,7 +93,7 @@ class CustomExcelExportApiTests(APITestCase):
         )
         workbook = load_workbook(BytesIO(response.content), read_only=True, data_only=True)
         rows = list(workbook.active.iter_rows(values_only=True))
-        self.assertEqual(rows[0], ("اسم عربي", "كود"))
+        self.assertEqual(rows[0], (_field_label(Customer, "name_ar"), _field_label(Customer, "code")))
         self.assertEqual(rows[1], ("عميل ظاهر", "C-001"))
         self.assertEqual(len(rows), 2)
 
