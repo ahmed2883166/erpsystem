@@ -778,7 +778,7 @@ class FixedAssetWorkflowTests(APITestCase):
     def _post_cash_gl_movement(self, account, number, movement_date, debit, credit):
         from accounting.services import post_journal
 
-        offset = self.gain_loss_gl if debit else self.expense_gl
+        offset = self.gain_loss_gl if Decimal(debit) > 0 else self.expense_gl
         entry = JournalEntry.objects.create(
             company=self.company, branch=self.branch, fiscal_year=self.year,
             entry_number=number, entry_date=movement_date,
