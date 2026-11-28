@@ -92,11 +92,12 @@ def post_inventory_valuation_assessment(assessment_id, user):
             raise ValidationError(
                 f"طبقات تكلفة الصنف {assessment.product.code} لا تطابق الرصيد في أحد أبعاد المخزن؛ أوقفنا التقييم لحماية التكلفة."
             )
-        previous_line = InventoryValuationAssessmentLine.objects.filter(
-            balance=balance, assessment__status=InventoryValuationAssessment.Status.POSTED,
-        ).order_by("-assessment__assessment_date", "-pk").first()
-        original_average = previous_line.original_average_cost if previous_line else balance.average_cost
         previous_value = balance.inventory_value
+        original_layer_value = sum((layer.quantity_remaining * _previous_layer_original_cost(layer) for layer in balance_layers), Decimal("0"))
+        current_layer_value = sum((layer.quantity_remaining * layer.unit_cost for layer in balance_layers), Decimal("0"))
+        if abs(current_layer_value - previous_value) > Decimal("0.0001"):
+            raise ValidationError(f"طبقات تكلفة الصنف {assessment.product.code} لا تطابق القيمة الدفترية؛ أوقفنا تقييم NRV.")
+        original_average = (original_layer_value / balance.quantity).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
         if assessment.product.costing_method == "fifo":
             layer_targets = []
             for layer in balance_layers:
@@ -107,7 +108,6 @@ def post_inventory_valuation_assessment(assessment_id, user):
         else:
             target_average = min(original_average, assessment.net_realizable_value_per_unit)
             raw_after = balance.quantity * target_average
-            original_layer_value = sum((layer.quantity_remaining * _previous_layer_original_cost(layer) for layer in balance_layers), Decimal("0"))
             layer_targets = []
             factor = (raw_after / original_layer_value) if original_layer_value > 0 else Decimal("0")
             for layer in balance_layers:
