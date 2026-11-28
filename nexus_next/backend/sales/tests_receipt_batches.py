@@ -188,6 +188,44 @@ class CustomerReceiptBatchTests(APITestCase):
             credit = sum((line.credit for line in lines), Decimal("0"))
             self.assertEqual(debit, credit, entry.entry_number)
 
+    def test_reversing_bank_receipt_batch_also_reverses_its_treasury_mirror(self):
+        from accounting.models import ChartOfAccount
+        from treasury.models import TreasuryAccount, TreasuryTransaction
+
+        bank_gl = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-BATCH-REV",
+            name_ar="بنك سندات القبض المجمعة", currency_code="EGP",
+        )
+        created = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "receipt_number": "BATCH-BANK-REV-001",
+            "receipt_date": "2026-03-11",
+            "method": "bank",
+            "payment_account": bank_gl.pk,
+            "amount": "75",
+            "allocations": [],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        mirror = TreasuryTransaction.objects.get(journal_entry_id=posted.data["journal_entry"])
+        self.assertEqual(mirror.status, TreasuryTransaction.Status.POSTED)
+
+        reversed_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(reversed_batch.status_code, 200, reversed_batch.data)
+        mirror.refresh_from_db()
+        self.assertEqual(mirror.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(mirror.reversal_journal_entry_id, reversed_batch.data["reversal_journal_entry"])
+
     def test_direct_receipt_cannot_overcollect_after_batch_allocation(self):
         invoice_id = self._create_posted_invoice("BATCH-INV-DIRECT-OVER")
         batch = self.client.post("/api/sales-documents/receipt-batches/", {
