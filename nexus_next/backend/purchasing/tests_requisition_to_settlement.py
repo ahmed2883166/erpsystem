@@ -721,3 +721,21 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.assertEqual(final_income_statement.data["revenue_total"], Decimal("150.0000"))
         self.assertEqual(final_income_statement.data["cost_of_sales_total"], Decimal("100.0000"))
         self.assertEqual(final_income_statement.data["gross_profit"], Decimal("50.0000"))
+
+        balance_sheet = self.client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}"
+            f"&as_of={sales_return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(balance_sheet.status_code, 200, balance_sheet.data)
+        self.assertEqual(balance_sheet.data["difference"], Decimal("0.0000"))
+
+        indirect_cash_flow = self.client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={self.company.pk}"
+            f"&date_from={self.request_date.isoformat()}"
+            f"&date_to={sales_return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(indirect_cash_flow.status_code, 200, indirect_cash_flow.data)
+        self.assertEqual(
+            indirect_cash_flow.data["reconciliation_difference"], Decimal("0.0000"),
+            indirect_cash_flow.data,
+        )
