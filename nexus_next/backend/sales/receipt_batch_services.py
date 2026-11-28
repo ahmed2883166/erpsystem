@@ -14,7 +14,7 @@ from sales.models import (
     CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation,
     CustomerRefund, SalesInvoice, SalesReturn,
 )
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 def _account(company, role):
@@ -256,6 +256,11 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
                 Q(reversal_date__isnull=True)
                 | Q(reversal_date__gte=entry_date)
                 | Q(reversal_journal_entry__isnull=True)
+                | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
+                | Q(reversal_treasury_transaction__isnull=True)
+                | Q(reversal_treasury_transaction__journal_entry__isnull=True)
+                | ~Q(reversal_treasury_transaction__status=TreasuryTransaction.Status.POSTED)
+                | ~Q(reversal_treasury_transaction__journal_entry__status=JournalEntry.Status.POSTED)
             )
         )
     ).exists()
