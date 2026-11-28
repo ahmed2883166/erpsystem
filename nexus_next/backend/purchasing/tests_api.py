@@ -3573,7 +3573,7 @@ class PurchasingWorkflowTests(APITestCase):
 
 
     def test_branch_purchase_policy_blocks_new_purchase_orders_when_branch_disabled(self):
-        policy = BranchPurchasePolicy.objects.create(
+        BranchPurchasePolicy.objects.create(
             branch=self.branch, purchase_enabled=False,
         )
         response = self.client.post("/api/purchasing/orders/", {
