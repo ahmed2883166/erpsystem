@@ -27,7 +27,7 @@ EXPORTS = {
         "label": "المخزون - الأصناف",
         "fields": ("code", "barcode", "name_ar", "name_en", "product_type", "stock_class",
                    "category", "unit", "purchase_price", "sale_price", "costing_method",
-                   "min_stock", "track_expiry", "is_active", "created_at"),
+                   "min_stock", "track_expiry", "is_active", "created_at", "updated_at"),
     },
     "inventory_balances": {
         "model": StockBalance,
@@ -44,7 +44,7 @@ EXPORTS = {
         "label": "العملاء",
         "fields": ("code", "customer_type", "name_ar", "name_en", "tax_number", "phone",
                    "mobile", "email", "address", "credit_limit", "payment_terms_days",
-                   "default_discount_percent", "is_active", "created_at"),
+                   "default_discount_percent", "discount_approval_limit", "notes", "is_active", "created_at", "updated_at"),
     },
     "suppliers": {
         "model": Supplier,
@@ -57,7 +57,7 @@ EXPORTS = {
         "model": TreasuryAccount,
         "label": "الحسابات البنكية والخزائن",
         "fields": ("code", "kind", "name_ar", "bank_name", "account_number", "iban",
-                   "currency_code", "opening_balance", "branch", "is_active", "created_at"),
+                   "currency_code", "opening_balance", "opening_foreign_amount", "opening_exchange_rate", "opening_exchange_rate_date", "branch", "is_active", "created_at"),
     },
     "bank_transactions": {
         "model": TreasuryTransaction,
@@ -106,7 +106,10 @@ FIELD_LABELS = {
     "contract_end_date": "تاريخ نهاية العقد", "termination_date": "تاريخ انتهاء الخدمة",
     "basic_salary": "الراتب الأساسي", "currency": "العملة",
     "payment_method": "طريقة صرف الراتب", "bank_account": "الحساب البنكي",
-    "cost_center": "مركز التكلفة", "document_number": "رقم المستند",
+    "cost_center": "مركز التكلفة", "updated_at": "آخر تعديل", "discount_approval_limit": "حد الخصم دون موافقة",
+    "notes": "ملاحظات", "opening_foreign_amount": "الرصيد الافتتاحي الأجنبي",
+    "opening_exchange_rate": "سعر صرف الرصيد الافتتاحي", "opening_exchange_rate_date": "تاريخ سعر الصرف",
+    "manager": "المدير المباشر", "document_number": "رقم المستند",
     "transaction_date": "تاريخ الحركة", "amount": "المبلغ بالعملة الأساسية",
     "transaction_currency": "عملة الحركة", "transaction_amount": "المبلغ بعملة الحركة",
     "exchange_rate": "سعر الصرف", "carrying_amount": "القيمة الدفترية",
