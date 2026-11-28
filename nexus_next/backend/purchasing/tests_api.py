@@ -4147,6 +4147,32 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             Decimal("10.0000"),
         )
 
+        # Reversing capitalization after the earlier supplier return must restore
+        # the remaining stock value and reverse the loss/reclassification journals.
+        reversed_response = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        document = LandedCostDocument.objects.get(pk=created.data["id"])
+        allocation.refresh_from_db()
+        distribution.refresh_from_db()
+        balance.refresh_from_db()
+        self.assertEqual(document.status, LandedCostDocument.Status.REVERSED)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+        self.assertEqual(balance.average_cost, Decimal("100.000000"))
+        self.assertEqual(distribution.journal_entry.status, JournalEntry.Status.REVERSED)
+        self.assertIsNotNone(distribution.reversal_journal_entry_id)
+        reversed_loss = distribution.reversal_journal_entry.lines.get(account=loss_account)
+        self.assertEqual(reversed_loss.credit, Decimal("10.0000"))
+
+        repeated_reverse = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(repeated_reverse.status_code, 400, repeated_reverse.data)
+
 
     def test_landed_cost_cannot_exceed_unallocated_direct_expense_line(self):
         _, receipt_line_id = self._create_and_post_receipt()
