@@ -1184,3 +1184,57 @@ class LandedCostDistribution(models.Model):
         if self.allocation.document.status != LandedCostDocument.Status.DRAFT:
             raise ValidationError("لا يمكن حذف توزيع تابع لمستند رسملة مرحّل.")
         return super().delete(*args, **kwargs)
+
+
+class BranchPurchasePolicy(models.Model):
+    """Controls whether a branch may buy and which suppliers it may use."""
+    branch = models.OneToOneField(
+        Branch, on_delete=models.CASCADE, related_name="purchase_policy",
+    )
+    purchase_enabled = models.BooleanField(default=True)
+    restrict_suppliers = models.BooleanField(default=False)
+    allowed_suppliers = models.ManyToManyField(
+        Supplier, blank=True, related_name="branch_purchase_policies",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="updated_branch_purchase_policies",
+    )
+
+    class Meta:
+        verbose_name = "سياسة شراء فرع"
+        verbose_name_plural = "سياسات شراء الفروع"
+
+    @property
+    def company_id(self):
+        return self.branch.company_id
+
+    def __str__(self):
+        return f"{self.branch} - {'مسموح' if self.purchase_enabled else 'موقوف'}"
+
+
+class BranchPurchasePolicyAudit(models.Model):
+    """Immutable audit record for branch purchase-policy changes."""
+    policy = models.ForeignKey(
+        BranchPurchasePolicy, on_delete=models.PROTECT, related_name="audit_entries",
+    )
+    changed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="branch_purchase_policy_audits",
+    )
+    old_values = models.JSONField(default=dict)
+    new_values = models.JSONField(default=dict)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-changed_at", "-pk")
+        indexes = [models.Index(fields=("policy", "-changed_at"), name="branch_buy_audit_idx")]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سجل تدقيق سياسة الشراء غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف سجل تدقيق سياسة الشراء.")

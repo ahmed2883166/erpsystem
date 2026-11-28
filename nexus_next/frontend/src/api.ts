@@ -4,6 +4,7 @@
  */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
 export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; activities?: ("commercial" | "service" | "medical" | "restaurants" | "industrial")[]; activity_assignments?: { id: number; activity: "commercial" | "service" | "medical" | "restaurants" | "industrial"; is_active: boolean }[]; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
+export type BranchPurchasePolicy = { id:number; branch:number; branch_id:number; branch_name:string; purchase_enabled:boolean; restrict_suppliers:boolean; allowed_supplier_ids:number[]; updated_at:string };
 export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; display_name?: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
@@ -274,6 +275,9 @@ export type SupplierAging = {
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  branchPurchasePolicies: (companyId:number) => request<BranchPurchasePolicy[]>(`/api/purchasing/branch-purchase-policies/?branch__company=${companyId}`),
+  createBranchPurchasePolicy: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<BranchPurchasePolicy>("/api/purchasing/branch-purchase-policies/", {method:"POST",body:JSON.stringify(payload)}); },
+  updateBranchPurchasePolicy: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<BranchPurchasePolicy>(`/api/purchasing/branch-purchase-policies/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
   createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
   updateRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
@@ -924,6 +928,10 @@ export type StockMovement = {
   destination_warehouse: number | null; destination_warehouse_name: string | null;
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
+export type InventoryReorderSuggestions = {
+  company:number; as_of:string; count:number; truncated:boolean; basis:string;
+  rows:{product:number;product_code:string;product_name:string;warehouse:number;warehouse_name:string;on_hand:string;reserved:string;available:string;on_order:string;projected_available:string;reorder_point:string;suggested_purchase_quantity:string;last_movement:string|null;age_days:number|null;stock_status:"sold"|"reorder"|"stagnant"|"available"}[];
+};
 export type InventoryStockAging = {
   company: number; branch: number | null; as_of: string;
   summary: Record<"active" | "slow" | "very_slow" | "stagnant" | "unknown", number>;
@@ -979,6 +987,10 @@ export type StockTransferReceipt = {
 };
 // واجهات حركات المخزون وتقاريره: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const stockApi = {
+  // اقتراح كميات الشراء بعد خصم أوامر البيع وإضافة أوامر الشراء المفتوحة.
+  reorderSuggestions: (companyId:number) => request<InventoryReorderSuggestions>(`/api/inventory/balances/reorder-suggestions/?company=${companyId}`),
+  // جلب الحركات غير المرحلة لمتابعتها.
+  pendingMovements: (companyId:number) => request<{count:number;truncated:boolean;results:StockMovement[]}>(`/api/inventory/movements/pending/?company=${companyId}`),
   // جلب حركات المخزون مرتبة من الأحدث.
   movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/recent/?company=${companyId}&limit=100`),
   // تحليل أعمار الحركة من قاعدة البيانات دون تنزيل سجل الحركات الكامل.

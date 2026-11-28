@@ -660,3 +660,30 @@ class StockTransferReceiptLine(models.Model):
             models.UniqueConstraint(fields=("receipt", "transfer_line"), name="uq_transfer_receipt_line"),
             models.CheckConstraint(condition=Q(quantity__gt=0), name="ck_transfer_receipt_qty_positive"),
         ]
+
+
+class WarehouseStatusAudit(models.Model):
+    """Audit trail for warehouse activation and reopening."""
+    warehouse = models.ForeignKey(
+        Warehouse, on_delete=models.PROTECT, related_name="status_audit_entries",
+    )
+    previous_is_active = models.BooleanField()
+    new_is_active = models.BooleanField()
+    reason = models.TextField(blank=True)
+    changed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="warehouse_status_audits",
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-changed_at", "-pk")
+        indexes = [models.Index(fields=("warehouse", "-changed_at"), name="wh_status_audit_idx")]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سجل تدقيق حالة المخزن غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف سجل تدقيق حالة المخزن.")

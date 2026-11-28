@@ -9,7 +9,7 @@ from approvals.services import refresh_financial_approval
 
 from accounting.models import ChartOfAccount, CostCenter, FxSubledgerRevaluation, JournalEntry, TaxCode
 from companies.access import resolve_warehouse_branch
-from companies.models import ExchangeRate
+from companies.models import Branch, ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
@@ -1521,3 +1521,35 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         raise serializers.ValidationError("لا يمكن تعديل مستند الرسملة بعد إنشائه؛ احذف المسودة وأعد إنشاءها.")
+
+
+class BranchPurchasePolicySerializer(serializers.ModelSerializer):
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all())
+    branch_id = serializers.IntegerField(source="branch.id", read_only=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True)
+    allowed_supplier_ids = serializers.PrimaryKeyRelatedField(
+        source="allowed_suppliers", many=True, required=False,
+        queryset=Supplier.objects.all(),
+    )
+
+    class Meta:
+        from .models import BranchPurchasePolicy
+        model = BranchPurchasePolicy
+        fields = (
+            "id", "branch", "branch_id", "branch_name", "purchase_enabled",
+            "restrict_suppliers", "allowed_supplier_ids", "updated_at",
+        )
+        read_only_fields = ("id", "branch_id", "branch_name", "updated_at")
+
+    def validate(self, attrs):
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if self.instance and "branch" in attrs and attrs["branch"].pk != self.instance.branch_id:
+            raise serializers.ValidationError({"branch": "لا يمكن نقل سياسة شراء قائمة إلى فرع آخر."})
+        suppliers = attrs.get("allowed_suppliers")
+        if branch and suppliers is not None:
+            invalid = [supplier.pk for supplier in suppliers if supplier.company_id != branch.company_id]
+            if invalid:
+                raise serializers.ValidationError({
+                    "allowed_supplier_ids": "كل الموردين المحددين يجب أن يتبعوا نفس شركة الفرع."
+                })
+        return attrs

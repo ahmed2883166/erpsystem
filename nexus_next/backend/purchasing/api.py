@@ -49,9 +49,97 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
-from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import BranchPurchasePolicy, BranchPurchasePolicyAudit, LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .serializers import BranchPurchasePolicySerializer, LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_landed_cost_document, reverse_landed_cost_document, post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
+
+
+def _check_branch_purchase_policy(branch, supplier):
+    """Reject purchases when the branch is disabled or supplier is not allowed."""
+    if branch is None or supplier is None:
+        raise ValidationError("تعذر تحديد الفرع أو المورد للتحقق من سياسة الشراء.")
+    if branch.company_id != supplier.company_id:
+        raise ValidationError("المورد والفرع يجب أن يتبعا نفس الشركة.")
+    policy = BranchPurchasePolicy.objects.filter(branch_id=branch.pk).prefetch_related(
+        "allowed_suppliers",
+    ).first()
+    if policy is None:
+        return
+    if not policy.purchase_enabled:
+        raise ValidationError("الشراء موقوف لهذا الفرع وفق سياسة الشركة.")
+    if policy.restrict_suppliers and not policy.allowed_suppliers.filter(pk=supplier.pk).exists():
+        raise ValidationError("هذا المورد غير مسموح للفرع المحدد.")
+
+
+def _purchase_branch_for_warehouse(warehouse):
+    """Resolve shared warehouses to the company's configured default branch."""
+    if warehouse.branch_id:
+        return warehouse.branch
+    return Branch.objects.filter(
+        company_id=warehouse.company_id, is_active=True,
+    ).order_by("-is_head_office", "code").first()
+
+
+class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
+    permission_classes = (CompanyRolePermission,)
+    serializer_class = BranchPurchasePolicySerializer
+    queryset = BranchPurchasePolicy.objects.select_related("branch", "branch__company").prefetch_related("allowed_suppliers")
+    filterset_fields = ("branch", "branch__company")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        return self.queryset.filter(
+            branch__company__in=companies,
+            branch__in=accessible_branches(self.request.user),
+        )
+
+    def _check_write(self, company_id):
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("إدارة سياسة الشراء متاحة لمدير الشركة والمحاسب فقط.")
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        branch = Branch.objects.select_for_update().get(pk=serializer.validated_data["branch"].pk)
+        self._check_write(branch.company_id)
+        if BranchPurchasePolicy.objects.filter(branch=branch).exists():
+            raise ValidationError({"branch": "سياسة شراء هذا الفرع مسجلة بالفعل."})
+        if not can_access_branch(self.request.user, branch.pk, branch.company_id):
+            raise PermissionDenied("لا تملك صلاحية إدارة سياسة هذا الفرع.")
+        policy = serializer.save(updated_by=self.request.user)
+        BranchPurchasePolicyAudit.objects.create(
+            policy=policy, changed_by=self.request.user, old_values={},
+            new_values={
+                "purchase_enabled": policy.purchase_enabled,
+                "restrict_suppliers": policy.restrict_suppliers,
+                "allowed_supplier_ids": list(policy.allowed_suppliers.values_list("id", flat=True)),
+            },
+        )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        policy = BranchPurchasePolicy.objects.select_for_update().select_related("branch").get(pk=serializer.instance.pk)
+        self._check_write(policy.branch.company_id)
+        if not can_access_branch(self.request.user, policy.branch_id, policy.branch.company_id):
+            raise PermissionDenied("لا تملك صلاحية إدارة سياسة هذا الفرع.")
+        old_values = {
+            "purchase_enabled": policy.purchase_enabled,
+            "restrict_suppliers": policy.restrict_suppliers,
+            "allowed_supplier_ids": list(policy.allowed_suppliers.values_list("id", flat=True)),
+        }
+        policy = serializer.save(updated_by=self.request.user)
+        BranchPurchasePolicyAudit.objects.create(
+            policy=policy, changed_by=self.request.user, old_values=old_values,
+            new_values={
+                "purchase_enabled": policy.purchase_enabled,
+                "restrict_suppliers": policy.restrict_suppliers,
+                "allowed_supplier_ids": list(policy.allowed_suppliers.values_list("id", flat=True)),
+            },
+        )
+
+    def perform_destroy(self, instance):
+        raise PermissionDenied("لا يمكن حذف سجل سياسة الشراء؛ عطّل الشراء أو عدّل قائمة الموردين مع الاحتفاظ بسجل التدقيق.")
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -99,6 +187,9 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         self._check_write(data["company"].pk)
         if not _purchase_warehouse_accessible(self.request.user, data["warehouse"]):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(data["warehouse"]), data["supplier"],
+        )
         serializer.save()
 
     def perform_update(self, serializer):
@@ -108,6 +199,8 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         warehouse = serializer.validated_data.get("warehouse", order.warehouse)
         if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        supplier = serializer.validated_data.get("supplier", order.supplier)
+        _check_branch_purchase_policy(_purchase_branch_for_warehouse(warehouse), supplier)
         serializer.save()
 
     @transaction.atomic
@@ -137,6 +230,9 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         """اعتماد المستند ونقله إلى الحالة التالية وفق دورة العمل."""
         order = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
         self._check_write(order.company_id)
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(order.warehouse), order.supplier,
+        )
         if order.status != PurchaseOrder.Status.DRAFT:
             raise ValidationError("أمر الشراء ليس مسودة.")
         if not order.lines.exists():
@@ -414,6 +510,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 raise ValidationError({"purchase_order": "أمر الشراء غير موجود داخل الشركة المحددة."})
             if not _purchase_warehouse_accessible(request.user, order.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(order.warehouse), order.supplier,
+            )
             # Lock all order lines in a stable order so concurrent draft receipts
             # cannot reserve the same remaining quantity.
             list(PurchaseOrderLine.objects.select_for_update().filter(
@@ -428,6 +527,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         warehouse = data["warehouse"]
         if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(warehouse), data["supplier"],
+        )
         serializer.save()
 
     @transaction.atomic
@@ -707,10 +809,19 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             acceptance = data.get("service_acceptance")
             if acceptance and not _purchase_warehouse_accessible(self.request.user, acceptance.order.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
+            if acceptance:
+                _check_branch_purchase_policy(
+                    _purchase_branch_for_warehouse(acceptance.order.warehouse), data["supplier"],
+                )
         else:
             receipt = data["receipt"]
             if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(receipt.warehouse), data["supplier"],
+            )
+        if data.get("invoice_type", PurchaseInvoice.InvoiceType.INVENTORY) == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            _check_branch_purchase_policy(data["branch"], data["supplier"])
         serializer.save()
 
     @transaction.atomic
@@ -737,8 +848,15 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if invoice.receipt_id:
             if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+            supplier = serializer.validated_data.get("supplier", invoice.supplier)
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(invoice.receipt.warehouse), supplier,
+            )
         elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        else:
+            supplier = serializer.validated_data.get("supplier", invoice.supplier)
+            _check_branch_purchase_policy(invoice.branch, supplier)
         serializer.save()
 
     @transaction.atomic

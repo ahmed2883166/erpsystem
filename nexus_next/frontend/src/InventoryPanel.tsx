@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
 import StockTransfersPanel from "./StockTransfersPanel";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type Company, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type Company, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting, type InventoryReorderSuggestions } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "transfers" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
@@ -19,6 +19,7 @@ export default function InventoryPanel({ companyId, currency = "", activityAssig
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reconciliationBranch, setReconciliationBranch] = useState("");
   const [warehouseSettings, setWarehouseSettings] = useState<WarehouseProductSetting[]>([]);
+  const [reorderSuggestions, setReorderSuggestions] = useState<InventoryReorderSuggestions | null>(null);
   const [stockCard, setStockCard] = useState<StockCard | null>(null);
   const [stockCardError, setStockCardError] = useState("");
   const [stockCardBusy, setStockCardBusy] = useState(false);
@@ -70,8 +71,8 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [p, c, u, w, l, m, b, a, ar, ws, br, ct, sa] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId), stockApi.counts(companyId), stockApi.stockAging(companyId)]);
-      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br); setCounts(ct); setStockAging(sa);
+      const [p, c, u, w, l, m, b, a, ar, ws, br, ct, sa, rs] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId), stockApi.counts(companyId), stockApi.stockAging(companyId), stockApi.reorderSuggestions(companyId)]);
+      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br); setCounts(ct); setStockAging(sa); setReorderSuggestions(rs);
       setSelectedCountId((old) => old && ct.some((item) => item.id === old) ? old : (ct[0]?.id ?? null));
       setReconciliationBranch((old) => old && br.some((item) => String(item.id) === old) ? old : "");
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
@@ -161,13 +162,7 @@ const loadValuationIntegrity = async () => {
     const totals = inventoryIndexes.byWarehouse.get(warehouse.id);
     return { warehouse, quantity: totals?.quantity ?? 0, value: totals?.value ?? 0, products: totals?.products.size ?? 0 };
   }).filter((row) => row.products > 0), [warehouses, inventoryIndexes]);
-  const reorderAlerts = useMemo(() => warehouses.filter((warehouse) => warehouse.is_active).flatMap((warehouse) => products.filter((product) => product.product_type === "goods" && product.is_active).map((product) => {
-    const setting = warehouseSettingIndex.get(`${warehouse.id}:${product.id}`);
-    const threshold = setting ? Number(setting.min_stock) : Number(product.min_stock);
-    const totals = inventoryIndexes.byWarehouseProduct.get(`${warehouse.id}:${product.id}`);
-    const quantity = totals?.quantity ?? 0;
-    return { product, warehouse, quantity, threshold, value: totals?.value ?? 0, isCustom: Boolean(setting) };
-  })).filter((row) => row.threshold > 0 && row.quantity <= row.threshold), [warehouses, products, warehouseSettingIndex, inventoryIndexes]);
+  const reorderAlerts = reorderSuggestions?.rows.filter((row) => row.stock_status === "reorder") ?? [];
   const expiryAlerts = balances.filter((row) => row.expiry_date && Number(row.quantity) > 0).map((row) => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
@@ -471,8 +466,8 @@ const submit = async (event: React.FormEvent) => {
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تقييم المخزون حسب المخزن</h3><p>قيمة وكمية الأرصدة الحالية</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>المخزن</th><th>عدد الأصناف</th><th>إجمالي الكمية</th><th>قيمة المخزون</th></tr></thead><tbody>{warehouseValuation.filter((row) => row.warehouse.name_ar.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.warehouse.id}><td>{row.warehouse.name_ar}</td><td>{row.products}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td></tr>)}{!warehouseValuation.length && <tr><td colSpan={4}>لا توجد أرصدة مخزنية حالياً.</td></tr>}</tbody></table></div>
         </section>
-        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>أصناف وصلت إلى حد إعادة الطلب</h3><p>مقارنة رصيد كل صنف داخل كل مخزن بحده الخاص، مع استخدام الحد العام للصنف كقيمة افتراضية</p></div></div>
-          <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد الحالي</th><th>حد إعادة الطلب</th><th>قيمة المخزون</th></tr></thead><tbody>{reorderAlerts.filter((row) => `${row.product.code} ${row.product.name_ar} ${row.warehouse.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product.id}-${row.warehouse.id}`}><td className="code-cell">{row.product.code}</td><td>{row.product.name_ar}</td><td>{row.warehouse.name_ar}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{row.threshold.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td></tr>)}{!reorderAlerts.length && <tr><td colSpan={6}>لا توجد أصناف عند حد إعادة الطلب.</td></tr>}</tbody></table></div>
+        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>أصناف وصلت إلى حد إعادة الطلب</h3><p>اقتراح الشراء بعد خصم أوامر البيع المفتوحة وإضافة كميات أوامر الشراء غير المستلمة، وفق حد إعادة الطلب المحدد لكل مخزن</p></div></div>
+          <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>المحجوز</th><th>المتاح</th><th>أوامر شراء مفتوحة</th><th>المتاح المتوقع</th><th>حد إعادة الطلب</th><th>الكمية المقترحة</th></tr></thead><tbody>{reorderAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product}-${row.warehouse}`}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}</td><td>{Number(row.on_hand).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.reserved).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.available).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.on_order).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.projected_available).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.reorder_point).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td><strong>{Number(row.suggested_purchase_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></td></tr>)}{!reorderAlerts.length && <tr><td colSpan={10}>لا توجد أصناف تحتاج إلى إعادة طلب.</td></tr>}</tbody></table></div>
         </section>
         <section className="activity-panel inventory-report-section">
           <div className="activity-title"><div><h3>تحليل حركة وأعمار المخزون</h3><p>تصنيف رقابي حسب عدد الأيام منذ آخر حركة مرحلة على الصنف داخل المخزن؛ لا يمثل تاريخ شراء الطبقة أو عمرها المحاسبي</p></div><select aria-label="تصفية حالة حركة المخزون" value={stockAgeFilter} onChange={(event) => setStockAgeFilter(event.target.value as typeof stockAgeFilter)}><option value="all">كل الحالات</option><option value="active">نشط</option><option value="slow">بطيء</option><option value="very_slow">بطيء جدًا</option><option value="stagnant">راكد</option><option value="unknown">غير محدد</option></select></div>
@@ -528,7 +523,7 @@ const submit = async (event: React.FormEvent) => {
           {!reconciliation && !reconciliationError && <div className="table-empty">نفّذ المطابقة لعرض نتيجة المقارنة.</div>}
           {reconciliation?.scope_note && <p className="inventory-report-note">{reconciliation.scope_note}</p>}
         </section>
-        <p className="inventory-report-note">حد إعادة الطلب يُحدد لكل مخزن وصنف، ويُستخدم الحد العام للصنف كقيمة افتراضية عند غياب الإعداد الخاص. المطابقة تقارن لقطة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة؛ ولا تمثل مطابقة تاريخية لفترة سابقة.</p>
+        <p className="inventory-report-note">تُحسب كمية الشراء المقترحة من الرصيد المتاح بعد خصم المحجوز وإضافة أوامر الشراء المفتوحة، ويجب ضبط حد إعادة الطلب لكل صنف داخل المخزن. المطابقة تقارن لقطة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة؛ ولا تمثل مطابقة تاريخية لفترة سابقة.</p>
       </div>}
     </div>
     {tab === "transfers" && <StockTransfersPanel companyId={companyId} products={products} warehouses={warehouses} />}

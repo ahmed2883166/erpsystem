@@ -21,7 +21,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount, TreasuryTransaction
-from purchasing.models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
+from purchasing.models import BranchPurchasePolicy, BranchPurchasePolicyAudit, LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -3570,6 +3570,55 @@ class PurchasingWorkflowTests(APITestCase):
         ):
             totals = entry.lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
+
+
+    def test_branch_purchase_policy_blocks_new_purchase_orders_when_branch_disabled(self):
+        BranchPurchasePolicy.objects.create(
+            branch=self.branch, purchase_enabled=False,
+        )
+        response = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-BRANCH-DISABLED",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("الشراء موقوف", str(response.data))
+        self.assertFalse(PurchaseOrder.objects.filter(order_number="PO-BRANCH-DISABLED").exists())
+
+    def test_branch_purchase_policy_restricts_suppliers_and_audits_changes(self):
+        other_supplier = Supplier.objects.create(
+            company=self.company, code="SUP-2", name_ar="مورد آخر",
+        )
+        policy_response = self.client.post("/api/purchasing/branch-purchase-policies/", {
+            "branch": self.branch.pk, "purchase_enabled": True,
+            "restrict_suppliers": True, "allowed_supplier_ids": [self.supplier.pk],
+        }, format="json")
+        self.assertEqual(policy_response.status_code, 201, policy_response.data)
+        policy = BranchPurchasePolicy.objects.get(branch=self.branch)
+
+        denied = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": other_supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-SUPPLIER-DENIED",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(denied.status_code, 400, denied.data)
+        self.assertIn("غير مسموح", str(denied.data))
+
+        allowed = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-SUPPLIER-ALLOWED",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(allowed.status_code, 201, allowed.data)
+
+        self.client.patch(
+            f"/api/purchasing/branch-purchase-policies/{policy.pk}/",
+            {"restrict_suppliers": False}, format="json",
+        )
+        self.assertEqual(BranchPurchasePolicyAudit.objects.filter(policy=policy).count(), 2)
 
 
 class SupplierReturnTransactionBoundaryTests(TransactionTestCase):

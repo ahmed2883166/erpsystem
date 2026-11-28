@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import PurchaseDocumentPrint, { type PurchasePrintDocument } from "./PurchaseDocumentPrint";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport, type PurchaseMatchingReport, type PurchaseAnalysisReport } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport, type PurchaseMatchingReport, type PurchaseAnalysisReport, type BranchPurchasePolicy } from "./api";
 
 type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -34,12 +34,14 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitte
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId, company, activityAssignments, primaryActivity }: Props) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
-  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging" | "landed-cost">("receipts");
+  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging" | "landed-cost" | "purchase-policies">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchPurchasePolicies, setBranchPurchasePolicies] = useState<BranchPurchasePolicy[]>([]);
+  const [policyForm, setPolicyForm] = useState({ branch: "", purchase_enabled: true, restrict_suppliers: false, allowed_supplier_ids: [] as string[] });
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
@@ -117,14 +119,14 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows, landedCostRows] = await Promise.all([
+      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows, landedCostRows, policyRows] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
         purchasingApi.orders(companyId), purchasingApi.serviceAcceptances(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId), purchasingApi.rfqs(companyId), purchasingApi.quotations(companyId),
-        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId), purchasingApi.landedCosts(companyId),
+        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId), purchasingApi.landedCosts(companyId), purchasingApi.branchPurchasePolicies(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active));
       setAccounts(accountRows); setCostCenters(costCenterRows.filter(x=>x.is_active)); setBranches(branchRows.filter(x=>x.is_active));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setLandedCosts(landedCostRows); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setBranchPurchasePolicies(policyRows); setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setLandedCosts(landedCostRows); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -153,6 +155,35 @@ const refresh = async () => {
         ? old.activity : (preferred ? String(preferred.id) : ""),
     }));
   }, [companyId, activityAssignments, primaryActivity]);
+
+  const saveBranchPurchasePolicy = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !policyForm.branch) { setError("حدد الفرع أولاً."); return; }
+    setBusy(true); setError(""); setNotice("");
+    const payload = {
+      branch: Number(policyForm.branch),
+      purchase_enabled: policyForm.purchase_enabled,
+      restrict_suppliers: policyForm.restrict_suppliers,
+      allowed_supplier_ids: policyForm.allowed_supplier_ids.map(Number),
+    };
+    try {
+      const existing = branchPurchasePolicies.find(row => row.branch === Number(policyForm.branch));
+      if (existing) await purchasingApi.updateBranchPurchasePolicy(existing.id, payload);
+      else await purchasingApi.createBranchPurchasePolicy(payload);
+      setNotice("تم حفظ سياسة الشراء للفرع وتسجيل التغيير في سجل التدقيق.");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ سياسة شراء الفرع.");
+    } finally { setBusy(false); }
+  };
+  const editBranchPurchasePolicy = (row: BranchPurchasePolicy) => {
+    setPolicyForm({
+      branch: String(row.branch), purchase_enabled: row.purchase_enabled,
+      restrict_suppliers: row.restrict_suppliers,
+      allowed_supplier_ids: row.allowed_supplier_ids.map(String),
+    });
+    setTab("purchase-policies"); setShowForm(false);
+  };
 
   const receiptLineQuantityForStatus = (receiptId: number, receiptLineId: number, status: "draft" | "posted") => invoices
     .filter((invoice) => invoice.receipt === receiptId && invoice.status === status)
@@ -749,12 +780,30 @@ const postInvoice = async (id: number) => {
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
       <button className="subtle-button" type="button" onClick={()=>setShowPurchaseTemplates(value=>!value)}>{showPurchaseTemplates?"إخفاء قوالب الطباعة":"قوالب طباعة المشتريات"}</button>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => { if (!showForm && tab === "requisitions") { setEditingReqId(null); setRequisitionForm({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" }); setRequisitionLines([{ product: String(products[0]?.id || ""), requested_quantity: "1", estimated_unit_price: "" }]); } setShowForm((v) => !v); }}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : tab === "landed-cost" ? "＋ رسملة تكلفة شراء" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "purchase-policies" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => { if (!showForm && tab === "requisitions") { setEditingReqId(null); setRequisitionForm({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" }); setRequisitionLines([{ product: String(products[0]?.id || ""), requested_quantity: "1", estimated_unit_price: "" }]); } setShowForm((v) => !v); }}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : tab === "landed-cost" ? "＋ رسملة تكلفة شراء" : tab === "purchase-policies" ? "سياسات الشراء" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "service-acceptances" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("service-acceptances"); setShowForm(false); setSearch(""); }}>استلام الخدمات <b>{serviceAcceptances.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "landed-cost" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("landed-cost"); setShowForm(false); setSearch(""); }}>رسملة تكاليف الشراء <b>{landedCosts.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>تقارير المشتريات</button></div>
+    <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "service-acceptances" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("service-acceptances"); setShowForm(false); setSearch(""); }}>استلام الخدمات <b>{serviceAcceptances.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "landed-cost" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("landed-cost"); setShowForm(false); setSearch(""); }}>رسملة تكاليف الشراء <b>{landedCosts.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>تقارير المشتريات</button><button className={tab === "purchase-policies" ? "inventory-tab active" : "inventory-tab"} onClick={() => { const firstBranch = branches[0]; const existing = branchPurchasePolicies.find(row => row.branch === firstBranch?.id); setTab("purchase-policies"); setShowForm(false); setSearch(""); setPolicyForm(existing ? {branch:String(existing.branch),purchase_enabled:existing.purchase_enabled,restrict_suppliers:existing.restrict_suppliers,allowed_supplier_ids:existing.allowed_supplier_ids.map(String)} : {branch:String(firstBranch?.id || ""),purchase_enabled:true,restrict_suppliers:false,allowed_supplier_ids:[]}); }}>صلاحيات شراء الفروع</button></div>
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
 
+    {tab === "purchase-policies" && <div className="inventory-form">
+      <div className="inventory-wide"><h3>سياسة الشراء لكل فرع</h3><p>يمكن إيقاف الشراء بالكامل أو قصر التعامل على موردين محددين. التغيير يسجل في سجل التدقيق ويطبق على أوامر الشراء والاستلام والفواتير.</p></div>
+      <form className="inventory-form inventory-wide" onSubmit={e => void saveBranchPurchasePolicy(e)}>
+        <label>الفرع<select required value={policyForm.branch} onChange={e => {
+          const selected = branchPurchasePolicies.find(row => row.branch === Number(e.target.value));
+          setPolicyForm(selected ? {
+            branch:String(selected.branch), purchase_enabled:selected.purchase_enabled,
+            restrict_suppliers:selected.restrict_suppliers,
+            allowed_supplier_ids:selected.allowed_supplier_ids.map(String),
+          } : {branch:e.target.value,purchase_enabled:true,restrict_suppliers:false,allowed_supplier_ids:[]});
+        }}><option value="">اختر الفرع</option>{branches.map(row=><option key={row.id} value={row.id}>{row.code} - {row.name_ar}</option>)}</select></label>
+        <label className="checkbox-label"><input type="checkbox" checked={policyForm.purchase_enabled} onChange={e=>setPolicyForm(old=>({...old,purchase_enabled:e.target.checked}))}/> السماح للفرع بالشراء</label>
+        <label className="checkbox-label"><input type="checkbox" checked={policyForm.restrict_suppliers} onChange={e=>setPolicyForm(old=>({...old,restrict_suppliers:e.target.checked}))}/> تقييد الشراء بموردين محددين</label>
+        {policyForm.restrict_suppliers && <div className="inventory-wide"><strong>الموردون المسموحون</strong><div className="inventory-line-editor">{suppliers.map(supplier=><label key={supplier.id} className="checkbox-label"><input type="checkbox" checked={policyForm.allowed_supplier_ids.includes(String(supplier.id))} onChange={e=>setPolicyForm(old=>({...old,allowed_supplier_ids:e.target.checked?[...old.allowed_supplier_ids,String(supplier.id)]:old.allowed_supplier_ids.filter(id=>id!==String(supplier.id))}))}/>{supplier.code} - {supplier.name_ar}</label>)}</div></div>}
+        <div className="inventory-wide"><button className="primary-button" type="submit" disabled={busy || !policyForm.branch}>حفظ سياسة الفرع</button></div>
+      </form>
+      <div className="inventory-wide data-table-wrap"><table><thead><tr><th>الفرع</th><th>الشراء</th><th>تقييد الموردين</th><th>عدد الموردين المسموحين</th><th>آخر تحديث</th><th>إجراء</th></tr></thead><tbody>{branchPurchasePolicies.map(row=><tr key={row.id}><td>{row.branch_name}</td><td>{row.purchase_enabled?"مسموح":"موقوف"}</td><td>{row.restrict_suppliers?"مقيد":"غير مقيد"}</td><td>{row.allowed_supplier_ids.length}</td><td>{new Date(row.updated_at).toLocaleString("ar-EG")}</td><td><button className="subtle-button" type="button" onClick={()=>editBranchPurchasePolicy(row)}>تعديل</button></td></tr>)}</tbody></table>{branchPurchasePolicies.length===0&&<div className="table-empty">لم يتم إعداد سياسات شراء للفروع بعد؛ الفروع غير المسجلة تظل مسموحًا لها بالشراء دون تقييد موردين.</div>}</div>
+    </div>}
     {showForm && tab === "landed-cost" && <form className="inventory-form" onSubmit={e=>void saveLandedCost(e)}>
       <div className="inventory-wide"><h3>مستند رسملة تكلفة شراء</h3><p>اربط فاتورة مصروف شحن أو جمارك أو تأمين بسطور استلام البضاعة. سيظل المستند مسودة حتى تنفذ الترحيل.</p></div>
       <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",receipt_lines:[],amount:"",basis:"manual"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
