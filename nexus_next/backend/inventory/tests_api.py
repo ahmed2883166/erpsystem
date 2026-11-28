@@ -1358,8 +1358,12 @@ class InventoryValuationNRVTests(APITestCase):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="NRV-001", name_ar="صنف تقييم", costing_method="fifo")
         self.warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="NRV-WH", name_ar="مخزن تقييم")
         inventory = ChartOfAccount.objects.create(company=self.company, code="1000", name_ar="المخزون", nature=ChartOfAccount.Nature.ASSET)
+        grni = ChartOfAccount.objects.create(company=self.company, code="2100", name_ar="بضاعة مستلمة غير مفوترة", nature=ChartOfAccount.Nature.LIABILITY)
+        cogs = ChartOfAccount.objects.create(company=self.company, code="5100", name_ar="تكلفة المبيعات", nature=ChartOfAccount.Nature.EXPENSE)
         loss = ChartOfAccount.objects.create(company=self.company, code="5900", name_ar="خسائر تخفيض المخزون", nature=ChartOfAccount.Nature.EXPENSE)
         AccountRole.objects.create(company=self.company, role=AccountRole.Role.INVENTORY, account=inventory)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, account=grni)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.COGS, account=cogs)
         AccountRole.objects.create(company=self.company, role=AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, account=loss)
 
     def _receive_stock(self):
@@ -1446,7 +1450,7 @@ class InventoryValuationNRVTests(APITestCase):
         issue = self.client.post("/api/inventory/movements/", {
             "company": self.company.pk, "movement_number": "NRV-ISSUE-001", "movement_type": "issue",
             "movement_date": "2026-03-12", "source_warehouse": self.warehouse.pk,
-            "lines": [{"product": self.product.pk, "quantity": "1"}],
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "0"}],
         }, format="json")
         self.assertEqual(issue.status_code, 201, issue.data)
         posted_issue = self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json")
