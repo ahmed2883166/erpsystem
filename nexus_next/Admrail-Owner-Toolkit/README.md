@@ -40,6 +40,8 @@ Company profile creation and ERP administrator creation must not be duplicated i
 - Owner PIN using PBKDF2 and a local failed-attempt lockout.
 - Diagnostics without printing secrets.
 - PostgreSQL service/tool discovery.
+- First-run provisioning from menu option **7** when `backend/.env` does not exist: test the PostgreSQL administrator login, create a new database and a separate non-superuser application login, verify application-login connectivity, generate the Django secret key, and write the initial environment file from `backend/.env.example`.
+- Explicitly approved Django migrations, reference-data seeding, and final system checks during first-run provisioning.
 - Encrypted backup delegated to the ERP's existing backup workflow.
 - Restore to a separately named NEW database; the active database is not overwritten.
 - Django checks and migration plan, with explicit `APPLY` confirmation and backup-first behavior.
@@ -50,6 +52,7 @@ Company profile creation and ERP administrator creation must not be duplicated i
 - Restore is isolated to a new database and verifies public tables and Django migration history. Application login, reports, and accounting balances still require a separate acceptance test before any controlled switch.
 - The PIN is a local deterrent, not a substitute for Windows account security, ACLs, signed releases, or private distribution.
 - Backup requires a configured destination and initialized offline backup-encryption key.
+- First-run provisioning refuses to overwrite an existing `backend/.env` or reuse an existing database/login name. If an operation partially creates a new role/database and later fails, it leaves those new resources in place for owner review rather than deleting them automatically.
 - Windows static checks are not a substitute for runtime testing on a clean Windows server with a real PostgreSQL installation.
 - Do not store customer credentials, database passwords, recovery keys, or private signing keys in source control or in the portable toolkit package.
 - The source currently resides in the public ERP repository branch until the owner moves it to a private repository. Do not put secrets or customer data on that branch.
