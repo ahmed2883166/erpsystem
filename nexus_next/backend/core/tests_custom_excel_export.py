@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 
-from core.custom_excel_export import EXPORTS, _field_label, _plain
+from core.custom_excel_export import EXPORTS, _excel_value, _field_label, _plain
 
 
 class CustomExcelExportSchemaTests(SimpleTestCase):
@@ -30,3 +30,11 @@ class CustomExcelExportSchemaTests(SimpleTestCase):
 
     def test_null_values_are_rendered_as_empty_cells(self):
         self.assertEqual(_plain(None), "")
+
+
+    def test_spreadsheet_formula_like_text_is_escaped(self):
+        for value in ('=HYPERLINK("https://example.invalid")', "+cmd|' /C calc'!A0", "@SUM(A1:A2)"):
+            with self.subTest(value=value):
+                self.assertTrue(_excel_value(value).startswith("'"))
+        self.assertEqual(_excel_value("Ordinary text"), "Ordinary text")
+        self.assertEqual(_excel_value(Decimal("-12.5000")), Decimal("-12.5000"))
