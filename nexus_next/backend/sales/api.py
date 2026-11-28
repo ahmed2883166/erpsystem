@@ -1016,18 +1016,36 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             accessible_invoices = accessible_invoices.filter(lines__product_id=product_id).distinct()
 
         invoices = accessible_invoices.filter(invoice_date__range=(date_from, date_to))
+        # Keep the original return in its posting period even if it was later
+        # reversed; report the reversal as a positive adjustment in its own period.
         returns = SalesReturn.objects.filter(
             invoice__in=accessible_invoices,
-            status=SalesReturn.Status.POSTED,
+            status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
             return_date__range=(date_from, date_to),
+            journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+        )
+        return_reversals = SalesReturn.objects.filter(
+            invoice__in=accessible_invoices,
+            status=SalesReturn.Status.REVERSED,
+            reversal_date__range=(date_from, date_to),
+            reversal_journal_entry__status=JournalEntry.Status.POSTED,
         )
         if product_id is not None:
             returns = returns.filter(lines__invoice_line__product_id=product_id).distinct()
+            return_reversals = return_reversals.filter(
+                lines__invoice_line__product_id=product_id,
+            ).distinct()
         invoice_lines = SalesInvoiceLine.objects.filter(invoice__in=invoices)
         return_lines = SalesReturnLine.objects.filter(sales_return__in=returns)
+        return_reversal_lines = SalesReturnLine.objects.filter(
+            sales_return__in=return_reversals,
+        )
         if product_id is not None:
             invoice_lines = invoice_lines.filter(product_id=product_id)
             return_lines = return_lines.filter(invoice_line__product_id=product_id)
+            return_reversal_lines = return_reversal_lines.filter(
+                invoice_line__product_id=product_id,
+            )
 
         def amount(value):
             return value if value is not None else Decimal("0")
@@ -1042,9 +1060,6 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 net=Sum("net_amount"), discount=Sum("discount_amount"),
                 tax=Sum("tax_amount"), total=Sum("total_amount"),
             )
-            return_totals = return_lines.aggregate(
-                net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
-            )
             invoice_count = invoice_lines.values("invoice_id").distinct().count()
             return_count = return_lines.values("sales_return_id").distinct().count()
         else:
@@ -1052,11 +1067,18 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 net=Sum("net_total"), discount=Sum("discount_total"),
                 tax=Sum("tax_total"), total=Sum("grand_total"),
             )
-            return_totals = returns.aggregate(
-                net=Sum("net_total"), tax=Sum("tax_total"), total=Sum("grand_total"),
-            )
             invoice_count = invoices.count()
             return_count = returns.count()
+        return_totals_raw = return_lines.aggregate(
+            net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
+        )
+        return_reversal_totals = return_reversal_lines.aggregate(
+            net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
+        )
+        return_totals = {
+            key: amount(return_totals_raw[key]) - amount(return_reversal_totals[key])
+            for key in ("net", "tax", "total")
+        }
         def invoice_lines_with_allocated_cost():
             # Annotate the per-invoice share first, then aggregate the annotation.
             # This avoids passing a mutable expression directly into multiple aggregates.
@@ -1070,7 +1092,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         sales_cost = cost_amount(
             invoice_lines_with_allocated_cost().aggregate(total=Sum("_allocated_sales_cost"))["total"]
         )
-        return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
+        return_cost = (
+            amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
+            - amount(return_reversal_lines.aggregate(total=Sum("cost_amount"))["total"])
+        )
         sales_net = amount(sales_totals["net"])
         returned_net = amount(return_totals["net"])
         net_sales = sales_net - returned_net
@@ -1084,6 +1109,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             discount=Sum("discount_amount"), cost=Sum("_allocated_sales_cost"),
         )
         customer_returns = return_lines.values(
+            "sales_return__invoice__customer_id",
+            "sales_return__invoice__customer__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        customer_return_reversals = return_reversal_lines.values(
             "sales_return__invoice__customer_id",
             "sales_return__invoice__customer__name_ar",
         ).annotate(
@@ -1106,25 +1138,29 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
-        for row in customer_returns:
-            key = row["sales_return__invoice__customer_id"]
-            customer = customers.setdefault(key, {
-                "customer": key,
-                "customer_name": row["sales_return__invoice__customer__name_ar"],
-                "invoice_count": 0,
-                "quantity_sold": Decimal("0"),
-                "quantity_returned": Decimal("0"),
-                "sales_net": Decimal("0"),
-                "return_net": Decimal("0"),
-                "sales_tax": Decimal("0"),
-                "return_tax": Decimal("0"),
-                "sales_cost": Decimal("0"),
-                "return_cost": Decimal("0"),
-            })
-            customer["quantity_returned"] += amount(row["quantity"])
-            customer["return_net"] += amount(row["net"])
-            customer["return_tax"] += amount(row["tax"])
-            customer["return_cost"] += amount(row["cost"])
+        for grouped_rows, sign in (
+            (customer_returns, Decimal("1")),
+            (customer_return_reversals, Decimal("-1")),
+        ):
+            for row in grouped_rows:
+                key = row["sales_return__invoice__customer_id"]
+                customer = customers.setdefault(key, {
+                    "customer": key,
+                    "customer_name": row["sales_return__invoice__customer__name_ar"],
+                    "invoice_count": 0,
+                    "quantity_sold": Decimal("0"),
+                    "quantity_returned": Decimal("0"),
+                    "sales_net": Decimal("0"),
+                    "return_net": Decimal("0"),
+                    "sales_tax": Decimal("0"),
+                    "return_tax": Decimal("0"),
+                    "sales_cost": Decimal("0"),
+                    "return_cost": Decimal("0"),
+                })
+                customer["quantity_returned"] += sign * amount(row["quantity"])
+                customer["return_net"] += sign * amount(row["net"])
+                customer["return_tax"] += sign * amount(row["tax"])
+                customer["return_cost"] += sign * amount(row["cost"])
 
         product_sales = invoice_lines_with_allocated_cost().values(
             "product_id", "product__code", "product__name_ar",
@@ -1134,6 +1170,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             invoice_count=Count("invoice_id", distinct=True),
         )
         product_returns = return_lines.values(
+            "invoice_line__product_id", "invoice_line__product__code",
+            "invoice_line__product__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        product_return_reversals = return_reversal_lines.values(
             "invoice_line__product_id", "invoice_line__product__code",
             "invoice_line__product__name_ar",
         ).annotate(
@@ -1157,26 +1200,30 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
-        for row in product_returns:
-            key = row["invoice_line__product_id"]
-            product = products.setdefault(key, {
-                "product": key,
-                "product_code": row["invoice_line__product__code"],
-                "product_name": row["invoice_line__product__name_ar"],
-                "invoice_count": 0,
-                "quantity_sold": Decimal("0"),
-                "quantity_returned": Decimal("0"),
-                "sales_net": Decimal("0"),
-                "return_net": Decimal("0"),
-                "sales_tax": Decimal("0"),
-                "return_tax": Decimal("0"),
-                "sales_cost": Decimal("0"),
-                "return_cost": Decimal("0"),
-            })
-            product["quantity_returned"] += amount(row["quantity"])
-            product["return_net"] += amount(row["net"])
-            product["return_tax"] += amount(row["tax"])
-            product["return_cost"] += amount(row["cost"])
+        for grouped_rows, sign in (
+            (product_returns, Decimal("1")),
+            (product_return_reversals, Decimal("-1")),
+        ):
+            for row in grouped_rows:
+                key = row["invoice_line__product_id"]
+                product = products.setdefault(key, {
+                    "product": key,
+                    "product_code": row["invoice_line__product__code"],
+                    "product_name": row["invoice_line__product__name_ar"],
+                    "invoice_count": 0,
+                    "quantity_sold": Decimal("0"),
+                    "quantity_returned": Decimal("0"),
+                    "sales_net": Decimal("0"),
+                    "return_net": Decimal("0"),
+                    "sales_tax": Decimal("0"),
+                    "return_tax": Decimal("0"),
+                    "sales_cost": Decimal("0"),
+                    "return_cost": Decimal("0"),
+                })
+                product["quantity_returned"] += sign * amount(row["quantity"])
+                product["return_net"] += sign * amount(row["net"])
+                product["return_tax"] += sign * amount(row["tax"])
+                product["return_cost"] += sign * amount(row["cost"])
 
         def serialize_group(row):
             sales_net_value = row["sales_net"] - row["return_net"]
