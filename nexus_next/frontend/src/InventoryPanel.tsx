@@ -45,7 +45,7 @@ export default function InventoryPanel({ companyId, currency = "", activityAssig
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ code: "", name_ar: "", barcode: "", unit: "", category: "", product_type: "goods", stock_class: "finished_goods", purchase_price: "0", sale_price: "0", min_stock: "0", costing_method: "weighted_average", track_expiry: false });
+  const [form, setForm] = useState({ code: "", name_ar: "", barcode: "", unit: "", category: "", product_type: "goods", stock_class: "finished_goods", purchase_price: "0", sale_price: "0", unit_weight: "0", unit_volume: "0", min_stock: "0", costing_method: "weighted_average", track_expiry: false });
   const [unitForm, setUnitForm] = useState({ code: "", name_ar: "", symbol: "", decimal_places: "2" });
   const [categoryForm, setCategoryForm] = useState({ code: "", name_ar: "" });
   const [warehouseForm, setWarehouseForm] = useState({ code: "", name_ar: "", branch: "", address: "" });
@@ -185,7 +185,7 @@ const submit = async (event: React.FormEvent) => {
     try {
       if (tab === "products") {
         if (!form.unit) throw new Error("أضف وحدة قياس أولاً.");
-        await inventoryApi.createProduct({ company: companyId, code: form.code, name_ar: form.name_ar, barcode: form.barcode, unit: Number(form.unit), category: form.category ? Number(form.category) : null, product_type: form.product_type, stock_class: form.product_type === "goods" ? form.stock_class : null, purchase_price: form.purchase_price, sale_price: form.sale_price, min_stock: form.min_stock, costing_method: form.costing_method, track_expiry: form.track_expiry });
+        await inventoryApi.createProduct({ company: companyId, code: form.code, name_ar: form.name_ar, barcode: form.barcode, unit: Number(form.unit), category: form.category ? Number(form.category) : null, product_type: form.product_type, stock_class: form.product_type === "goods" ? form.stock_class : null, purchase_price: form.purchase_price, sale_price: form.sale_price, unit_weight: form.unit_weight, unit_volume: form.unit_volume, min_stock: form.min_stock, costing_method: form.costing_method, track_expiry: form.track_expiry });
         setForm((old) => ({ ...old, code: "", name_ar: "", barcode: "" }));
       } else if (tab === "categories") {
         await inventoryApi.createCategory({ company: companyId, ...categoryForm }); setCategoryForm({ code: "", name_ar: "" });
@@ -263,6 +263,8 @@ const submit = async (event: React.FormEvent) => {
         <label>المجموعة<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}><option value="">بدون مجموعة</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name_ar}</option>)}</select></label>
         <label>سعر الشراء<input type="number" min="0" step="0.0001" value={form.purchase_price} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} /></label>
         <label>سعر البيع<input type="number" min="0" step="0.0001" value={form.sale_price} onChange={(e) => setForm({ ...form, sale_price: e.target.value })} /></label>
+        <label>وزن الوحدة<input type="number" min="0" step="0.000001" value={form.unit_weight} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></label>
+        <label>حجم الوحدة<input type="number" min="0" step="0.000001" value={form.unit_volume} onChange={(e) => setForm({ ...form, unit_volume: e.target.value })} /></label>
         <label>حد إعادة الطلب<input type="number" min="0" step="0.0001" value={form.min_stock} onChange={(e) => setForm({ ...form, min_stock: e.target.value })} /></label>
         <label>طريقة التقييم<select value={form.costing_method} onChange={(e) => setForm({ ...form, costing_method: e.target.value })}><option value="weighted_average">متوسط مرجح</option><option value="fifo">FIFO</option></select></label>
         <label className="inventory-check"><input type="checkbox" checked={form.track_expiry} disabled={form.product_type === "service"} onChange={(e) => setForm({ ...form, track_expiry: e.target.checked })} /> تتبع الصلاحية</label>
