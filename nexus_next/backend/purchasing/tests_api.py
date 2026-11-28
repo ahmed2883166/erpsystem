@@ -4065,6 +4065,89 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(reversed_report.data["totals"]["allocated"], "0")
         self.assertEqual(reversed_report.data["totals"]["reversed"], "20.0000")
 
+    def test_landed_cost_on_goods_returned_before_capitalization_is_expensed_not_lost_from_trace(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-LC-RETURN-TRACE", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_response.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice_response.data["id"], "return_number": "RET-LC-TRACE",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice_response.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        source_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "LC-EXP-RETURN-TRACE", "invoice_date": "2026-03-13",
+            "lines": [{
+                "description": "شحن غير قابل للاسترداد",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "20.0000",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(source_response.status_code, 201, source_response.data)
+        posted_expense = self.client.post(
+            f"/api/purchasing/invoices/{source_response.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_expense.status_code, 200, posted_expense.data)
+        source_line = PurchaseInvoice.objects.get(pk=source_response.data["id"]).lines.get()
+
+        created = self.client.post("/api/purchasing/landed-costs/", {
+            "company": self.company.pk,
+            "source_invoice": source_response.data["id"],
+            "document_number": "LC-RETURN-TRACE",
+            "document_date": "2026-03-14",
+            "allocations": [{
+                "source_invoice_line": source_line.pk,
+                "receipt_line": receipt_line_id,
+                "basis": "manual",
+                "amount": "20.0000",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted_landed_cost = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_landed_cost.status_code, 200, posted_landed_cost.data)
+
+        allocation = LandedCostAllocation.objects.get(document_id=created.data["id"])
+        distribution = allocation.distributions.get(branch=self.branch)
+        self.assertEqual(distribution.inventory_amount, Decimal("10.0000"))
+        self.assertEqual(distribution.cogs_amount, Decimal("0.0000"))
+        self.assertEqual(distribution.adjustment_loss_amount, Decimal("10.0000"))
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("110.0000"))
+        loss_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS,
+        ).account
+        self.assertEqual(
+            distribution.journal_entry.lines.get(account=loss_account).debit,
+            Decimal("10.0000"),
+        )
+
+
     def test_landed_cost_cannot_exceed_unallocated_direct_expense_line(self):
         _, receipt_line_id = self._create_and_post_receipt()
         expense = ChartOfAccount.objects.get(company=self.company, code="6000")
