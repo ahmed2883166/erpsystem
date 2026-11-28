@@ -5,9 +5,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
 import StockTransfersPanel from "./StockTransfersPanel";
+import InventoryNRVPanel from "./InventoryNRVPanel";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type Company, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting, type InventoryReorderSuggestions } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "transfers" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "transfers" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting" | "nrv";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
 export default function InventoryPanel({ companyId, currency = "", activityAssignments, primaryActivity }: { companyId: number | null; currency?: string; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] }) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
@@ -246,12 +247,14 @@ const submit = async (event: React.FormEvent) => {
     { id: "reorder", label: "حدود الطلب لكل مخزن", count: warehouseSettings.filter((item) => item.is_active).length },
     { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.pagination.total_rows || 0 },
     { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
+    { id: "nrv", label: "تقييم NRV (IAS 2)", count: 0 },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
   return <section className="work-panel inventory-panel">
-    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات. <strong>القيم المالية بالعملة الأساسية: {currency || "—"}</strong></p></div>{tab !== "balances" && tab !== "reports" && tab !== "stock-card" && tab !== "transfers" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
+    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات. <strong>القيم المالية بالعملة الأساسية: {currency || "—"}</strong></p></div>{tab !== "balances" && tab !== "reports" && tab !== "stock-card" && tab !== "transfers" && tab !== "nrv" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
     <div className="inventory-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab(item.id); setShowForm(false); setSearch(""); }}>{item.label}<b>{item.count}</b></button>)}</div>
     {error && <div className="error-banner">{error}</div>}
+    {tab === "nrv" && <InventoryNRVPanel companyId={companyId} products={products} warehouses={warehouses} />}
     {showForm && <form className="inventory-form" onSubmit={submit}>
       {tab === "products" && <>
         <label>كود الصنف<input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></label>
