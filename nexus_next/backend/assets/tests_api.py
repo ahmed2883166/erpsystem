@@ -775,6 +775,74 @@ class FixedAssetWorkflowTests(APITestCase):
             document_number=f"AUTO-FA-PAY-{payment.pk}",
         ).exists())
 
+    def _post_cash_gl_movement(self, account, number, movement_date, debit, credit):
+        from accounting.services import post_journal
+
+        offset = self.gain_loss_gl if debit else self.expense_gl
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number=number, entry_date=movement_date,
+            description="حركة اختبار على حساب الخزينة",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=account, debit=Decimal(debit), credit=Decimal(credit),
+        )
+        JournalLine.objects.create(
+            entry=entry, account=offset, debit=Decimal(credit), credit=Decimal(debit),
+        )
+        return post_journal(entry.pk, actor=self.user)
+
+    def test_asset_supplier_payment_does_not_use_deposits_after_payment_date(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        cash_gl = self._account("1105", "خزينة بإيداع لاحق", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-FA-FUTURE-DEPOSIT",
+            name_ar="خزينة بإيداع لاحق", opening_balance=Decimal("0"),
+        )
+        self._post_cash_gl_movement(
+            cash_gl, "FA-FUTURE-DEPOSIT", date(2026, 1, 20), "500", "0",
+        )
+        payment = self._asset_supplier_payment(
+            invoice, supplier, cash_gl, "FA-BACKDATED-NO-FUND", "100.0000",
+        )
+        journal_count = JournalEntry.objects.count()
+
+        with self.assertRaises(ValidationError):
+            post_asset_supplier_payment(payment.pk, self.user)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, AssetSupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
+    def test_asset_supplier_payment_rejects_intermediate_future_overdraft(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        cash_gl = self._account("1106", "خزينة بحركة مستقبلية", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-FA-FUTURE-WITHDRAWAL",
+            name_ar="خزينة بحركة مستقبلية", opening_balance=Decimal("200"),
+        )
+        self._post_cash_gl_movement(
+            cash_gl, "FA-FUTURE-WITHDRAWAL", date(2026, 1, 20), "0", "180",
+        )
+        self._post_cash_gl_movement(
+            cash_gl, "FA-FUTURE-DEPOSIT-2", date(2026, 1, 25), "100", "0",
+        )
+        payment = self._asset_supplier_payment(
+            invoice, supplier, cash_gl, "FA-BACKDATED-OVERDRAFT", "100.0000",
+        )
+        journal_count = JournalEntry.objects.count()
+
+        with self.assertRaises(ValidationError):
+            post_asset_supplier_payment(payment.pk, self.user)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, AssetSupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_asset_supplier_payment_rejects_unlinked_inactive_wrong_branch_and_foreign_treasury(self):
         invoice, supplier = self._create_supplier_asset_invoice()
         other_branch = Branch.objects.create(
