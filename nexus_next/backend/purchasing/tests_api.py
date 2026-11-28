@@ -954,20 +954,9 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
         self.assertEqual(posted_refund.data["status"], "posted")
 
-        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
-        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination_warehouse)
-        self.assertEqual(
-            (source_balance.quantity, source_balance.inventory_value),
-            (Decimal("1.0000"), Decimal("100.0000")),
-        )
-        self.assertEqual(
-            (destination_balance.quantity, destination_balance.inventory_value),
-            (Decimal("0.0000"), Decimal("0.0000")),
-        )
-        self.assertEqual(
-            source_balance.inventory_value + destination_balance.inventory_value,
-            Decimal("100.0000"),
-        )
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
         self.assertEqual(
             JournalLine.objects.filter(account__code="2100", entry__company=self.company).aggregate(
                 debit=Sum("debit"), credit=Sum("credit"),
@@ -3480,7 +3469,9 @@ class PurchasingWorkflowTests(APITestCase):
             (destination_after_transfer.quantity, destination_after_transfer.inventory_value),
             (Decimal("1.0000"), Decimal("100.0000")),
         )
+        transfer_line.refresh_from_db()
         self.assertEqual(transfer_line.cost_amount, Decimal("100.0000"))
+        self.assertEqual(transfer_line.unit_cost, Decimal("100.0000"))
         transfer_entries = [
             link.journal_entry for link in transfer.journal_links.select_related("journal_entry")
         ]
@@ -3535,9 +3526,20 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(sale_posted.status_code, 200, sale_posted.data)
 
         # Reconcile subledgers and inventory valuation against their posted GL accounts.
-        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
-        self.assertEqual(balance.quantity, Decimal("1.0000"))
-        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination_warehouse)
+        self.assertEqual(
+            (source_balance.quantity, source_balance.inventory_value),
+            (Decimal("1.0000"), Decimal("100.0000")),
+        )
+        self.assertEqual(
+            (destination_balance.quantity, destination_balance.inventory_value),
+            (Decimal("0.0000"), Decimal("0.0000")),
+        )
+        self.assertEqual(
+            source_balance.inventory_value + destination_balance.inventory_value,
+            Decimal("100.0000"),
+        )
 
         grni = ChartOfAccount.objects.get(company=self.company, code="2100")
         grni_totals = JournalLine.objects.filter(
