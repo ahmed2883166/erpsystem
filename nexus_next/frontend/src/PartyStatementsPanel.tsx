@@ -16,8 +16,15 @@ type StatementRow = Statement["rows"][number];
 const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const money = (value: string | number, currency: string) => `${formatMoney(value)} ${currency}`.trim();
 const documentLabel = (kind: string) => ({
-  invoice: "فاتورة",
-  receipt: "مقبوض",
+  invoice: "فاتورة مبيعات",
+  receipt: "سند قبض",
+  receipt_reversal: "عكس سند قبض",
+  receipt_batch: "سند قبض مجمع",
+  receipt_batch_reversal: "عكس سند قبض مجمع",
+  sales_return: "مردود مبيعات",
+  sales_return_reversal: "عكس مردود مبيعات",
+  fx_revaluation: "إعادة تقييم عملة",
+  fx_revaluation_reversal: "عكس إعادة تقييم عملة",
   payment: "دفعة",
   asset_invoice: "فاتورة شراء أصل",
   asset_payment: "سداد فاتورة أصل",
