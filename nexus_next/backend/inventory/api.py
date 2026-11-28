@@ -1418,9 +1418,10 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 raise ValidationError({"branch": "معرّف الفرع غير صحيح."}) from None
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            default_branch = _default_branch(company_id)
             settings = settings.filter(
                 Q(warehouse__branch_id=branch_id)
-                | (Q(warehouse__branch__isnull=True) if _default_branch(company_id).pk == branch_id else Q(pk__in=[]))
+                | (Q(warehouse__branch__isnull=True) if default_branch and default_branch.pk == branch_id else Q(pk__in=[]))
             )
 
         from sales.models import SalesOrder, SalesOrderLine
