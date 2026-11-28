@@ -170,6 +170,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
             if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
 
+    @transaction.atomic
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         instance = serializer.instance
