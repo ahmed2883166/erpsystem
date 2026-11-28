@@ -1416,6 +1416,30 @@ class InventoryValuationNRVTests(APITestCase):
         self.assertEqual(balance.inventory_value, Decimal("50.00"))
         self.assertEqual(balance.average_cost, Decimal("10.000000"))
 
+    def test_weighted_average_nrv_reassessment_after_receipt_uses_original_cost_basis(self):
+        self.product.costing_method = Product.CostingMethod.WEIGHTED_AVERAGE
+        self.product.save(update_fields=("costing_method",))
+        balance = self._receive_stock()
+        self._assessment("NRV-WAVG-001", "8", "2026-03-11")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("40.00"))
+
+        receipt = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-WAVG-RCV-002", "movement_type": "receipt",
+            "movement_date": "2026-03-12", "destination_warehouse": self.warehouse.pk,
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_cost": "12"}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+
+        recovery = self._assessment("NRV-WAVG-002", "10.5", "2026-03-13")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("105.00"))
+        self.assertEqual(Decimal(recovery["adjustment_amount"]), Decimal("-5.00"))
+
     def test_nrv_reversal_is_blocked_after_later_stock_movement(self):
         self._receive_stock()
         assessment = self._assessment("NRV-LATER-MOVE", "8", "2026-03-11")
