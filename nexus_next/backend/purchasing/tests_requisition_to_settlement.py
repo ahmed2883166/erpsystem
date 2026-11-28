@@ -624,3 +624,83 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.assertEqual(income_statement.data["revenue_total"], Decimal("150.0000"))
         self.assertEqual(income_statement.data["cost_of_sales_total"], Decimal("100.0000"))
         self.assertEqual(income_statement.data["gross_profit"], Decimal("50.0000"))
+
+        # Close the customer side of the same cross-branch journey with a
+        # posted sales return and its reversal. This verifies that stock,
+        # customer balance, tax, COGS and the GL all return to their pre-return
+        # state instead of validating those modules only in isolated tests.
+        sales_return_date = final_date + timedelta(days=1)
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": sales_invoice.data["id"],
+            "return_number": "SALE-E2E-RET-001",
+            "return_date": sales_return_date.isoformat(),
+            "lines": [{
+                "invoice_line": sales_invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_sales_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_sales_return.status_code, 200, posted_sales_return.data)
+        self.assertEqual(posted_sales_return.data["status"], "posted")
+        self.assertEqual(posted_sales_return.data["grand_total"], "171.0000")
+
+        sales_return_reversal_date = sales_return_date + timedelta(days=1)
+        reversed_sales_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": sales_return_reversal_date.isoformat()},
+            format="json",
+        )
+        self.assertEqual(reversed_sales_return.status_code, 200, reversed_sales_return.data)
+        self.assertEqual(reversed_sales_return.data["status"], "reversed")
+        self.assertIsNotNone(reversed_sales_return.data["reversal_journal_entry"])
+        self.assertIsNotNone(reversed_sales_return.data["reversal_stock_movement"])
+
+        final_destination_stock.refresh_from_db()
+        self.assertEqual(final_destination_stock.quantity, Decimal("1.0000"))
+        self.assertEqual(final_destination_stock.inventory_value, Decimal("100.0000"))
+        sales_invoice_after_return_reversal = self.client.get(
+            f"/api/sales-documents/invoices/{sales_invoice.data['id']}/",
+        )
+        self.assertEqual(
+            sales_invoice_after_return_reversal.status_code, 200,
+            sales_invoice_after_return_reversal.data,
+        )
+        self.assertEqual(sales_invoice_after_return_reversal.data["paid_total"], "171.0000")
+        self.assertEqual(sales_invoice_after_return_reversal.data["balance_due"], "0.0000")
+
+        final_reconciliation = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}"
+            f"&as_of={sales_return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(final_reconciliation.status_code, 200, final_reconciliation.data)
+        final_rows = {row["key"]: row for row in final_reconciliation.data["rows"]}
+        for key in ("suppliers", "customers"):
+            self.assertEqual(final_rows[key]["status"], "matched", final_rows[key])
+            self.assertEqual(Decimal(final_rows[key]["difference"]), Decimal("0"))
+
+        final_trial_balance = self.client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            f"&date_from={self.request_date.isoformat()}"
+            f"&date_to={sales_return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(final_trial_balance.status_code, 200, final_trial_balance.data)
+        self.assertEqual(final_trial_balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(
+            final_trial_balance.data["debit_total"],
+            final_trial_balance.data["credit_total"],
+        )
+
+        final_income_statement = self.client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={self.company.pk}"
+            f"&date_from={self.request_date.isoformat()}"
+            f"&date_to={sales_return_reversal_date.isoformat()}",
+        )
+        self.assertEqual(final_income_statement.status_code, 200, final_income_statement.data)
+        self.assertEqual(final_income_statement.data["revenue_total"], Decimal("150.0000"))
+        self.assertEqual(final_income_statement.data["cost_of_sales_total"], Decimal("100.0000"))
+        self.assertEqual(final_income_statement.data["gross_profit"], Decimal("50.0000"))
