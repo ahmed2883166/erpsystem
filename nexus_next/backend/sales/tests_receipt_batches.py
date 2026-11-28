@@ -229,13 +229,14 @@ class CustomerReceiptBatchTests(APITestCase):
         self.assertEqual(mirror.reversal_journal_entry_id, reversed_batch.data["reversal_journal_entry"])
 
     def test_customer_refund_reconciles_statement_and_advance_and_blocks_batch_reversal(self):
-        from accounting.models import AccountRole, ChartOfAccount
+        from accounting.models import ChartOfAccount
         from sales.models import CustomerRefund
         from treasury.models import TreasuryAccount, TreasuryTransaction
 
         cash = ChartOfAccount.objects.get(company=self.company, code="1005")
         receivables = ChartOfAccount.objects.get(company=self.company, code="1200")
-        year = self.company.fiscal_years.get(name="2026")
+        from companies.models import FiscalYear
+        year = FiscalYear.objects.get(company=self.company, name="2026")
         treasury_account = TreasuryAccount.objects.create(
             company=self.company, branch=self.branch, account=cash,
             kind=TreasuryAccount.Kind.CASH, code="CASH-ADV-REFUND",
