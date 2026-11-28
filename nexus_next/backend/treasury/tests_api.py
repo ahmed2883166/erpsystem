@@ -1523,7 +1523,7 @@ class TreasuryChequeWorkflowTests(APITestCase):
             company=self.company, branch=None, account=global_gl,
             kind="bank", code="BANK-GLOBAL-CHQ", name_ar="بنك عام",
         )
-        other_branch = Branch.objects.create(
+        Branch.objects.create(
             company=self.company, code="BR2", name_ar="فرع آخر",
         )
         limited = get_user_model().objects.create_user(
@@ -2003,7 +2003,7 @@ class PettyCashWorkflowTests(APITestCase):
         self.assertEqual(fund.petty_cash_account_id, self.petty_account.pk)
 
     def test_branch_limited_user_cannot_create_petty_cash_fund_with_company_wide_accounts(self):
-        other_branch = Branch.objects.create(
+        Branch.objects.create(
             company=self.company, code="BR2", name_ar="فرع آخر",
         )
         global_cash_gl = ChartOfAccount.objects.create(
