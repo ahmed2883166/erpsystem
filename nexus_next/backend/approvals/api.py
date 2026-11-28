@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner, parse_company_param
 from companies.models import Branch
+from customers.models import Customer
 from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer, FinancialApprovalRequestSerializer
@@ -83,9 +84,9 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     def _manager(self, approval):
         """تنفيذ وظيفة _manager ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if not has_company_role(self.request.user, approval.company_id, ("admin",)):
-            raise PermissionDenied("اعتماد الخصومات متاح لمدير الشركة فقط.")
+            raise PermissionDenied("اعتماد استثناءات فواتير المبيعات متاح لمدير الشركة فقط.")
         if approval.requested_by_id == self.request.user.pk:
-            raise PermissionDenied("لا يجوز اعتماد طلب الخصم بواسطة منشئه.")
+            raise PermissionDenied("لا يجوز اعتماد طلب الفاتورة بواسطة منشئه.")
         if approval.status != SalesInvoiceApproval.Status.PENDING:
             raise ValidationError("تم اتخاذ قرار على هذا الطلب بالفعل.")
         if approval.invoice.status != "draft":
@@ -103,7 +104,17 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
             or approval.requested_invoice_limit != approval.invoice.invoice_approval_limit
             or approval.requested_lines_snapshot != invoice_discount_snapshot(approval.invoice)
         ):
-            raise ValidationError("تغيرت تفاصيل الخصم بعد إنشاء الطلب؛ يجب مراجعة الطلب الأحدث.")
+            raise ValidationError("تغيرت تفاصيل الفاتورة بعد إنشاء الطلب؛ يجب مراجعة الطلب الأحدث.")
+        if approval.requested_credit_limit is not None:
+            from sales.services import customer_credit_exposure
+            customer = Customer.objects.select_for_update().get(pk=approval.invoice.customer_id)
+            current_exposure = customer_credit_exposure(customer)
+            if (
+                customer.credit_limit != approval.requested_credit_limit
+                or current_exposure != approval.requested_credit_exposure
+                or approval.invoice.grand_total != approval.requested_credit_amount
+            ):
+                raise ValidationError("تغير موقف العميل الائتماني منذ إنشاء الطلب؛ أعد مراجعة حد الائتمان قبل الاعتماد.")
 
     @action(detail=True, methods=("post",))
     @transaction.atomic
@@ -113,9 +124,12 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
         approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
         self._manager(approval)
+        decision_note = str(request.data.get("note", "")).strip()
+        if approval.requested_credit_limit is not None and not decision_note:
+            raise ValidationError({"note": "سبب الاستثناء الائتماني مطلوب لتوثيق قرار المدير."})
         approval.status = SalesInvoiceApproval.Status.APPROVED
         approval.decided_by = request.user
-        approval.decision_note = str(request.data.get("note", "")).strip()[:500]
+        approval.decision_note = decision_note[:500]
         approval.save()
         return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
 

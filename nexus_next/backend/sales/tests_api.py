@@ -786,6 +786,79 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted.data["status"], "posted")
         self.assertEqual(posted.data["approval_status"], "approved")
 
+    def test_customer_credit_limit_requires_independent_manager_approval_and_fresh_snapshot(self):
+        self.customer.credit_limit = Decimal("150")
+        self.customer.save(update_fields=("credit_limit",))
+        delivery_id, line_id = self._create_delivery("DEL-CREDIT-LIMIT")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-CREDIT-LIMIT", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["grand_total"], "200.0000")
+        self.assertEqual(invoice.data["approval_status"], "pending")
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        self.assertEqual(approval.requested_credit_limit, Decimal("150"))
+        self.assertEqual(approval.requested_credit_exposure, Decimal("0.0000"))
+        self.assertEqual(approval.requested_credit_amount, Decimal("200.0000"))
+
+        blocked = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self_approval = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/",
+            {"note": "محاولة اعتماد ذاتي"}, format="json",
+        )
+        self.assertEqual(self_approval.status_code, 403, self_approval.data)
+
+        manager = get_user_model().objects.create_user(username="credit-manager", password="test-password")
+        CompanyMembership.objects.create(
+            user=manager, company=self.company, role="admin", all_branches=True,
+        )
+        self.customer.credit_limit = Decimal("250")
+        self.customer.save(update_fields=("credit_limit",))
+        self.client.force_authenticate(manager)
+        stale = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/",
+            {"note": "موافقة على حد قديم"}, format="json",
+        )
+        self.assertEqual(stale.status_code, 400, stale.data)
+
+        self.customer.credit_limit = Decimal("150")
+        self.customer.save(update_fields=("credit_limit",))
+        rejected = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/reject/",
+            {"note": "يلزم تقديم مبرر تجاري أقوى"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.client.force_authenticate(self.user)
+        resubmitted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(resubmitted.status_code, 400, resubmitted.data)
+        approval = SalesInvoiceApproval.objects.filter(invoice_id=invoice.data["id"]).order_by("-requested_at", "-pk").first()
+        self.assertEqual(approval.status, SalesInvoiceApproval.Status.PENDING)
+        self.client.force_authenticate(manager)
+        missing_reason = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {}, format="json"
+        )
+        self.assertEqual(missing_reason.status_code, 400, missing_reason.data)
+        approved = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/",
+            {"note": "استثناء ائتماني مبرر"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["status"], "approved")
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+        self.assertEqual(posted.data["approval_status"], "approved")
+
     def test_discount_within_company_limit_posts_without_approval(self):
         DiscountApprovalPolicy.objects.create(
             company=self.company, max_discount_percent=Decimal("10"),
@@ -857,6 +930,13 @@ class SalesWorkflowTests(APITestCase):
                     cursor.execute(
                         "UPDATE approvals_salesinvoiceapproval SET requested_lines_snapshot = %s::jsonb WHERE id = %s",
                         ["[]", approval.pk],
+                    )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE approvals_salesinvoiceapproval SET requested_credit_limit = %s WHERE id = %s",
+                        ["99", approval.pk],
                     )
         with self.assertRaises(DatabaseError):
             with transaction.atomic():
@@ -1520,6 +1600,9 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(after_row["balance_due"], "10600.0000")
         self.assertEqual(after_row["fx_revaluation_adjustment"], "600.0000")
         self.assertEqual(after_revaluation.data["totals"]["total_due"], "10600.0000")
+        invoice_detail = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/")
+        self.assertEqual(invoice_detail.status_code, 200, invoice_detail.data)
+        self.assertEqual(invoice_detail.data["balance_due"], "10600.0000")
 
     def test_fx_revaluation_journal_can_be_reversed_before_any_later_settlement(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-REV")

@@ -1069,6 +1069,7 @@ export type SalesInvoiceApproval = {
   id: number; company: number; invoice: number; invoice_number: string; customer_name: string;
   invoice_date: string; invoice_total: string; requested_by: number; requested_by_name: string;
   requested_limit: string | null; requested_invoice_limit: string | null; requested_discount_total: string; requested_max_discount_percent: string;
+  requested_credit_limit: string | null; requested_credit_exposure: string | null; requested_credit_amount: string | null;
   requested_lines_snapshot: SalesInvoiceApprovalLineSnapshot[]; status: "pending" | "approved" | "rejected" | "superseded";
   decided_by: number | null; decided_by_name: string | null; decision_note: string;
   requested_at: string; decided_at: string | null;

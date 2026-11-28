@@ -112,7 +112,17 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
       note = entered.trim();
       if (!note) { setError("سبب الرفض مطلوب."); return; }
     } else {
-      note = window.prompt("ملاحظة الموافقة (اختياري):") || "";
+      const entered = window.prompt(
+        row.requested_credit_limit !== null
+          ? "اكتب سبب الاستثناء الائتماني ومبرر السماح بتجاوز الحد:"
+          : "ملاحظة الموافقة (اختياري):",
+      );
+      if (entered === null) return;
+      note = entered.trim();
+      if (row.requested_credit_limit !== null && !note) {
+        setError("سبب الاستثناء الائتماني مطلوب.");
+        return;
+      }
     }
     setBusy(true); setError(""); setNotice("");
     try {
@@ -134,7 +144,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
 
   return <section className="work-panel">
     <div className="work-panel-head">
-      <div><h2>الموافقات الإدارية والحدود المالية</h2><p>الخصم أو الفواتير أو أوامر الشراء أو سندات الصرف التي تتجاوز الحدود المحددة تتطلب اعتماد مدير الشركة قبل التأكيد أو الترحيل.</p></div>
+      <div><h2>الموافقات الإدارية والحدود المالية</h2><p>الخصم أو الفواتير أو أوامر الشراء أو سندات الصرف أو تجاوز حد ائتمان العميل تتطلب اعتماد مدير الشركة قبل الترحيل.</p></div>
       <span className="coming-soon">{canManage ? "مدير الشركة" : "عرض فقط"} · طلبات معلقة: {pending.toLocaleString("ar-EG")}</span>
     </div>
     {error && <div className="error-banner">{error}</div>}
@@ -151,11 +161,14 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
     </form>}
     {!canManage && <p className="inventory-report-note">عرض طلبات الموافقة متاح حسب صلاحيات الشركة؛ تعديل السياسة واعتماد الطلبات متاحان لمدير الشركة فقط.</p>}
     <div className="data-table-wrap">
-      <table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>التاريخ</th><th>الإجمالي</th><th>حد الخصم وقت الطلب</th><th>حد إجمالي الفاتورة وقت الطلب</th><th>إجمالي الخصم</th><th>تفاصيل النسخة محل المراجعة</th><th>مقدم الطلب</th><th>الحالة</th><th>القرار</th></tr></thead>
+      <table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>التاريخ</th><th>الإجمالي</th><th>حد الخصم وقت الطلب</th><th>حد إجمالي الفاتورة وقت الطلب</th><th>حد ائتمان العميل وقت الطلب</th><th>التعرض الائتماني وقت الطلب</th><th>قيمة الفاتورة</th><th>إجمالي الخصم</th><th>تفاصيل النسخة محل المراجعة</th><th>مقدم الطلب</th><th>الحالة</th><th>القرار</th></tr></thead>
         <tbody>{requests.map(row => <tr key={row.id}>
           <td className="code-cell">{row.invoice_number}</td><td>{row.customer_name}</td><td>{row.invoice_date}</td>
           <td>{money(row.invoice_total)}</td><td>{row.requested_limit === null ? "غير محدد" : Number(row.requested_limit).toLocaleString("ar-EG", {maximumFractionDigits:4}) + "%"}</td>
           <td>{row.requested_invoice_limit === null ? "غير محدد" : money(row.requested_invoice_limit)}</td>
+          <td>{row.requested_credit_limit === null ? "—" : money(row.requested_credit_limit)}</td>
+          <td>{row.requested_credit_exposure === null ? "—" : money(row.requested_credit_exposure)}</td>
+          <td>{row.requested_credit_amount === null ? "—" : money(row.requested_credit_amount)}</td>
           <td>{money(row.requested_discount_total)}</td>
           <td><details className="approval-snapshot"><summary>عرض {row.requested_lines_snapshot?.length || 0} صنف</summary>
             <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الخصم %</th><th>قيمة الخصم</th><th>كود الضريبة</th><th>الضريبة</th><th>الإجمالي</th></tr></thead>
@@ -171,7 +184,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
           <td>{row.requested_by_name}</td><td>{statusLabel[row.status]}</td>
           <td>{row.status === "pending" ? canManage ? <div className="table-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void decide(row, "approve")}>اعتماد</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void decide(row, "reject")}>رفض</button></div> : "بانتظار قرار المدير" : <span>{row.decided_by_name || "—"}{row.decision_note ? ` · ${row.decision_note}` : ""}</span>}</td>
         </tr>)}
-        {!requests.length && <tr><td colSpan={11}>لا توجد طلبات موافقة مالية لهذه الشركة.</td></tr>}</tbody>
+        {!requests.length && <tr><td colSpan={14}>لا توجد طلبات موافقة مالية لهذه الشركة.</td></tr>}</tbody>
       </table>
     </div>
 

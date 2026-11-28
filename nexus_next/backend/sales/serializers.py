@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Q, Sum
+from django.utils import timezone
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
@@ -634,7 +635,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return str(self._paid_amount(obj))
 
     def get_balance_due(self, obj):
-        """حساب الرصيد المتبقي بعد خصم التحصيلات والمردودات المرحلة."""
+        """حساب الرصيد المتبقي بالقيمة الدفترية الحالية بعد التحصيل والمردودات وإعادة التقييم."""
+        if obj.transaction_currency_id:
+            from accounting.fx_subledger_services import open_fx_invoice_balances
+            _, _, carrying_balance = open_fx_invoice_balances(
+                obj, direction="receivable", as_of=timezone.localdate(),
+            )
+            return str(max(carrying_balance, Decimal("0")))
         paid = self._paid_amount(obj)
         returned = obj.returns.filter(
             status=SalesReturn.Status.POSTED,
@@ -643,6 +650,8 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     def get_approval_status(self, obj):
         """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
+        attempts = list(obj.approval_requests.all())
+        latest = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
         limit = obj.discount_approval_limit
         lines = list(obj.lines.all())
         discount_exceeded = limit is not None and any(line.discount_percent > limit for line in lines)
@@ -650,9 +659,20 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             obj.invoice_approval_limit is not None
             and obj.grand_total > obj.invoice_approval_limit
         )
-        if not discount_exceeded and not amount_exceeded:
+        if obj.status != SalesInvoice.Status.DRAFT and latest and latest.requested_credit_limit is not None:
+            if latest.status == "approved":
+                return latest.status
+            if not discount_exceeded and not amount_exceeded:
+                return "not_required"
+        from sales.services import customer_credit_exposure
+        credit_exposure = customer_credit_exposure(obj.customer) if obj.customer.credit_limit > 0 else Decimal("0")
+        credit_exceeded = (
+            obj.status == SalesInvoice.Status.DRAFT
+            and obj.customer.credit_limit > 0
+            and credit_exposure + obj.grand_total > obj.customer.credit_limit
+        )
+        if not discount_exceeded and not amount_exceeded and not credit_exceeded:
             return "not_required"
-        attempts = list(obj.approval_requests.all())
         approval = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
         if not approval:
             return "pending"
@@ -662,6 +682,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             or approval.requested_max_discount_percent != max_discount
             or approval.requested_invoice_limit != obj.invoice_approval_limit
             or approval.requested_lines_snapshot != invoice_discount_snapshot(obj)
+            or (credit_exceeded and (
+                approval.requested_credit_limit != obj.customer.credit_limit
+                or approval.requested_credit_exposure != credit_exposure
+                or approval.requested_credit_amount != obj.grand_total
+            ))
         ):
             return "pending"
         return approval.status
@@ -822,6 +847,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
         if lines_changed and (
             invoice.discount_approval_limit is not None or invoice.invoice_approval_limit is not None
+            or invoice.customer.credit_limit > 0
         ):
             for old_request in invoice.approval_requests.filter(status=SalesInvoiceApproval.Status.PENDING):
                 old_request.status = SalesInvoiceApproval.Status.SUPERSEDED
@@ -836,7 +862,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 invoice.invoice_approval_limit is not None
                 and invoice.grand_total > invoice.invoice_approval_limit
             )
-            if discount_exceeded or amount_exceeded:
+            from sales.services import customer_credit_exposure
+            credit_exposure = customer_credit_exposure(invoice.customer)
+            credit_exceeded = (
+                invoice.customer.credit_limit > 0
+                and credit_exposure + invoice.grand_total > invoice.customer.credit_limit
+            )
+            if discount_exceeded or amount_exceeded or credit_exceeded:
                 SalesInvoiceApproval.objects.create(
                     company=invoice.company,
                     invoice=invoice,
@@ -845,6 +877,9 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                     requested_invoice_limit=invoice.invoice_approval_limit,
                     requested_discount_total=invoice.discount_total,
                     requested_max_discount_percent=max_discount,
+                    requested_credit_limit=invoice.customer.credit_limit if credit_exceeded else None,
+                    requested_credit_exposure=credit_exposure if credit_exceeded else None,
+                    requested_credit_amount=invoice.grand_total if credit_exceeded else None,
                     requested_lines_snapshot=invoice_discount_snapshot(invoice),
                 )
 

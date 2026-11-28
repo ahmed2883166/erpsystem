@@ -69,7 +69,7 @@ class DiscountApprovalPolicy(models.Model):
 
 
 class SalesInvoiceApproval(models.Model):
-    """يحفظ طلب اعتماد خصم أو فاتورة بيع مع لقطة بياناتها وقت الطلب."""
+    """يحفظ طلب اعتماد خصم أو قيمة أو حد ائتماني لفاتورة بيع مع لقطة وقت الطلب."""
     class Status(models.TextChoices):
         PENDING = "pending", "بانتظار الموافقة"
         APPROVED = "approved", "تمت الموافقة"
@@ -83,6 +83,9 @@ class SalesInvoiceApproval(models.Model):
     requested_invoice_limit = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     requested_discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     requested_max_discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    requested_credit_limit = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    requested_credit_exposure = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    requested_credit_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     requested_lines_snapshot = models.JSONField(default=list, editable=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     decided_by = models.ForeignKey(
@@ -98,8 +101,8 @@ class SalesInvoiceApproval(models.Model):
         indexes = [
             models.Index(fields=("company", "status", "requested_at"), name="approval_co_status_date_idx"),
         ]
-        verbose_name = "طلب موافقة خصم"
-        verbose_name_plural = "طلبات موافقات الخصم"
+        verbose_name = "طلب موافقة فاتورة مبيعات"
+        verbose_name_plural = "طلبات موافقات فواتير المبيعات"
 
     def clean(self):
         super().clean()
@@ -114,6 +117,7 @@ class SalesInvoiceApproval(models.Model):
             immutable_fields = (
                 "company_id", "invoice_id", "requested_by_id", "requested_limit",
                 "requested_invoice_limit", "requested_discount_total", "requested_max_discount_percent",
+                "requested_credit_limit", "requested_credit_exposure", "requested_credit_amount",
                 "requested_lines_snapshot", "requested_at",
             )
             if any(getattr(old, field) != getattr(self, field) for field in immutable_fields):
