@@ -32,14 +32,14 @@ def reverse_linked_document_treasury_movement(*, journal_entry_id, reversal_jour
     if movement is None:
         return None
     if movement.status != TreasuryTransaction.Status.POSTED or movement.reversal_journal_entry_id:
-        raise ValidationError("حركة البنك المرتبطة بسند القبض ليست في حالة تسمح بالعكس.")
+        raise ValidationError("حركة البنك المرتبطة بالمستند ليست في حالة تسمح بالعكس.")
     if (
         BankStatementLine.objects.filter(matched_transaction_id=movement.pk).exists()
         or BankStatementMatchAllocation.objects.filter(transaction_id=movement.pk).exists()
     ):
-        raise ValidationError("لا يمكن عكس سند القبض بعد مطابقته بنكيًا؛ فك المطابقة أولًا.")
+        raise ValidationError("لا يمكن عكس المستند بعد مطابقة حركته بنكيًا؛ فك المطابقة أولًا.")
     if TreasuryCheque.objects.filter(treasury_transaction_id=movement.pk).exists():
-        raise ValidationError("لا يمكن عكس سند القبض المرتبط بشيك؛ عالج دورة الشيك أولًا.")
+        raise ValidationError("لا يمكن عكس المستند المرتبط بشيك؛ عالج دورة الشيك أولًا.")
 
     TreasuryTransaction.objects.filter(
         pk=movement.pk, status=TreasuryTransaction.Status.POSTED,
