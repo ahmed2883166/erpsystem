@@ -726,6 +726,46 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
 
 
+    def test_inactive_warehouse_keeps_historical_stock_card_but_rejects_new_movements(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="INACTIVE-WH-HISTORY",
+            name_ar="تاريخ مخزن موقوف",
+        )
+        warehouse = self._warehouse("INACTIVE-HISTORY-WH")
+        receipt = self._movement(
+            "INACTIVE-HISTORY-RCV", "receipt", destination=warehouse,
+            quantity="5", cost="10",
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        disabled = self.client.delete(f"/api/inventory/warehouses/{warehouse.pk}/")
+        self.assertEqual(disabled.status_code, 204)
+        warehouse.refresh_from_db()
+        self.assertFalse(warehouse.is_active)
+
+        historical_card = self.client.get(
+            f"/api/inventory/movements/stock-card/?product={self.product.pk}"
+            f"&warehouse={warehouse.pk}&date_from=2026-11-01&date_to=2026-11-30",
+        )
+        self.assertEqual(historical_card.status_code, 200, historical_card.data)
+        self.assertEqual(historical_card.data["closing_quantity"], "5.0000")
+        self.assertEqual(historical_card.data["closing_value"], "50.0000")
+        self.assertEqual(
+            [row["movement_number"] for row in historical_card.data["rows"]],
+            ["INACTIVE-HISTORY-RCV"],
+        )
+
+        blocked = self._movement(
+            "INACTIVE-HISTORY-NEW", "receipt", destination=warehouse,
+            quantity="1", cost="10",
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertIn("مخزن موقوف", str(blocked.data))
+
     def test_stock_card_returns_opening_period_and_running_balances(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="CARD-1", name_ar="بطاقة صنف")
         warehouse = self._warehouse("CARD-WH")
