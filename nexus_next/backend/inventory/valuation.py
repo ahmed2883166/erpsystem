@@ -121,11 +121,18 @@ def post_inventory_valuation_assessment(assessment_id, user):
         layer_value = sum((layer.quantity_remaining * target for layer, _original, target in layer_targets), Decimal("0"))
         residual = adjusted_value - layer_value
         if residual:
-            largest = max(layer_targets, key=lambda item: item[0].quantity_remaining)
+            # Put currency-rounding residue on the layer carrying the largest value,
+            # avoiding a negative unit cost when another layer is already fully written down.
+            largest = max(
+                layer_targets,
+                key=lambda item: (item[0].quantity_remaining * item[2], item[0].quantity_remaining),
+            )
             layer_targets = [
                 (layer, original, target + residual / layer.quantity_remaining if layer.pk == largest[0].pk else target)
                 for layer, original, target in layer_targets
             ]
+            if any(target < 0 for _layer, _original, target in layer_targets):
+                raise ValidationError("تعذر توزيع فرق التقريب على طبقات التكلفة دون قيمة سالبة.")
         adjusted_average = (adjusted_value / balance.quantity).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
         line = InventoryValuationAssessmentLine.objects.create(
             assessment=assessment, balance=balance, quantity=balance.quantity,
