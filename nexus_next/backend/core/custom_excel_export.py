@@ -175,7 +175,12 @@ class CustomExcelExportView(APIView):
                 qs = qs.filter(warehouse__branch_id=branch_id)
             elif resource == "inventory_movements":
                 from django.db.models import Q
-                qs = qs.filter(Q(source_warehouse__branch_id=branch_id) | Q(destination_warehouse__branch_id=branch_id))
+                source_scope = Q(source_warehouse__branch_id=branch_id) | Q(source_warehouse__isnull=True)
+                destination_scope = Q(destination_warehouse__branch_id=branch_id) | Q(destination_warehouse__isnull=True)
+                if has_company_wide_branch_access(request.user, company_id):
+                    source_scope |= Q(source_warehouse__branch__isnull=True)
+                    destination_scope |= Q(destination_warehouse__branch__isnull=True)
+                qs = qs.filter(source_scope & destination_scope)
             else:
                 qs = qs.filter(branch_id=branch_id)
 
