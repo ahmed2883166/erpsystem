@@ -125,10 +125,28 @@ try {
     $tempEnv = $envFile + ".provisioning"
     [IO.File]::WriteAllLines($tempEnv,$lines,(New-Object System.Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $tempEnv -Destination $envFile
+    $python = Join-Path $resolvedRoot "runtime\python.exe"
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { $python = Join-Path $backend ".venv\Scripts\python.exe" }
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "تم تجهيز القاعدة وملف الاتصال، لكن Python runtime غير موجود لتطبيق migrations." }
+    Push-Location $backend
+    try {
+        & $python manage.py check
+        if ($LASTEXITCODE -ne 0) { throw "تم إنشاء القاعدة، لكن فشل Django system check. لم تُنفذ migrations." }
+        & $python manage.py migrate --plan
+        if ($LASTEXITCODE -ne 0) { throw "تم إنشاء القاعدة، لكن تعذر قراءة خطة migrations." }
+        if ((Read-Host "القاعدة جديدة وفارغة. لتطبيق migrations وتجهيز العملات المرجعية اكتب APPLY") -cne "APPLY") {
+            throw "تم إيقاف التهيئة قبل migrations. قاعدة البيانات الجديدة وملف الاتصال محفوظان؛ أعد تشغيل التهيئة بعد المراجعة."
+        }
+        & $python manage.py migrate --noinput
+        if ($LASTEXITCODE -ne 0) { throw "فشل تطبيق migrations. القاعدة الجديدة محفوظة ولم يتم حذفها." }
+        & $python manage.py seed_reference_data
+        if ($LASTEXITCODE -ne 0) { throw "تم تطبيق migrations لكن فشل تجهيز البيانات المرجعية. أعد تشغيل أمر seed_reference_data بعد مراجعة السجل." }
+        & $python manage.py check
+        if ($LASTEXITCODE -ne 0) { throw "فشل فحص Django النهائي بعد التهيئة." }
+    } finally { Pop-Location }
     $createdRole = $false
     $createdDatabase = $false
-    Write-Host "تم إنشاء قاعدة AdmRail ومستخدم التطبيق واختبار الاتصال، وإنشاء backend\.env." -ForegroundColor Green
-    Write-Host "الخطوة التالية: شغّل فحوص Django ثم migrations وتجهيز البيانات المرجعية." -ForegroundColor Cyan
+    Write-Host "اكتمل تجهيز قاعدة AdmRail ومستخدم التطبيق وملف الاتصال وmigrations والبيانات المرجعية." -ForegroundColor Green
     Write-Host "كلمة مرور مسؤول PostgreSQL لم تُحفظ. كلمة مرور التطبيق محفوظة في backend\.env بصلاحيات نظام الملفات الحالية."
 } catch {
     if ($createdDatabase -or $createdRole) {
