@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatMoney } from "./formatters";
+import CustomExcelExportButton from "./CustomExcelExportButton";
 import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport, type HrSalaryHistory } from "./api";
 
 const statusLabels: Record<string, string> = {
@@ -327,7 +328,7 @@ const exportEmployeePayReport = () => {
 
   if(!companyId) return <section className="work-panel"><div className="empty-state">اختر الشركة لفتح الموارد البشرية والمرتبات.</div></section>;
   return <section className="work-panel hr-payroll-panel">
-    <div className="work-panel-head"><div><h2>الموارد البشرية والمرتبات</h2><p>إدارة الموظفين وعناصر الأجر ودورات المرتبات — تشغيل هجين بإدخال يدوي واحتساب تلقائي</p></div><span className="coming-soon">مرحلة التأسيس</span></div>
+    <div className="work-panel-head"><div><h2>الموارد البشرية والمرتبات</h2><p>إدارة الموظفين وعناصر الأجر ودورات المرتبات — تشغيل هجين بإدخال يدوي واحتساب تلقائي</p></div><div className="table-actions">{tab === "employees" && <CustomExcelExportButton resource="employees" companyId={companyId} />}<span className="coming-soon">مرحلة التأسيس</span></div></div>
     <div className="hr-tabs" role="tablist" style={{display:"flex",gap:8,margin:"18px 0"}}>
       <button type="button" className={tab==="employees"?"primary-button":"subtle-button"} onClick={()=>setTab("employees")}>ملفات الموظفين</button>
       <button type="button" className={tab==="components"?"primary-button":"subtle-button"} onClick={()=>setTab("components")}>عناصر المرتب</button>

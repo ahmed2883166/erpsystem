@@ -1002,3 +1002,15 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 
 .asset-review-actions{display:flex;flex-wrap:wrap;gap:6px;min-width:220px}
 .asset-review-actions input{min-width:150px;max-width:220px}
+
+
+/* Custom Excel export: column selection, preview and safe download. */
+.custom-export-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;margin:16px 0;padding:14px;border:1px solid var(--nx-border,#e5eaf1);border-radius:12px;max-height:240px;overflow:auto}
+.custom-export-fields label{display:flex;align-items:center;gap:8px;font-size:12px}
+.custom-export-order{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px;padding-inline-start:24px}
+.custom-export-order li{display:flex;align-items:center;gap:6px;font-size:12px}
+.custom-export-order li span{flex:1}
+.custom-export-preview{margin-top:16px}
+.custom-export-preview .data-table-wrap{max-height:280px;overflow:auto;margin:10px 0}
+.custom-export-preview table{min-width:100%;font-size:11px}
+.custom-export-preview small{display:block;color:var(--muted,#7b8797);margin-top:8px}

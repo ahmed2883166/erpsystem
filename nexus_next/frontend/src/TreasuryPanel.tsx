@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
+import CustomExcelExportButton from "./CustomExcelExportButton";
 import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule, type PettyCashFund, type PettyCashExpense, type PettyCashCount, type PettyCashCustodianHandover, type PettyCashStatement, type PettyCashExpenseReport, type DirectCashFlowReport, type IndirectCashFlowReport } from "./api";
 
 type Props = { companyId: number };
@@ -214,7 +215,7 @@ const balance=(id:number)=>{const account=accounts.find(a=>a.id===id);if(account
   // تحديد الحركات المرحلة المرشحة لمطابقة مبلغ سطر كشف البنك.
 const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>Math.sign(Number(t.amount))===Math.sign(Number(lineAmount))&&Number(t.remaining_amount)>0)||[];
   return <section className="work-panel treasury-panel">
-    <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
+    <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><div className="table-actions"><span className="coming-soon">{accounts.length} حساب</span>{(tab === "accounts" || tab === "transactions") && <CustomExcelExportButton resource={tab === "transactions" ? "bank_transactions" : "bank"} companyId={companyId} />}</div></div>
     {error&&<div className="error-banner">{error}</div>}
     <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="cashflow"?"active":""} onClick={()=>setTab("cashflow")}>قائمة التدفقات النقدية</button><button className={tab==="commitments"?"active":""} onClick={()=>setTab("commitments")}>الالتزامات النقدية</button><button className={tab==="pettycash"?"active":""} onClick={()=>setTab("pettycash")}>العهدة النثرية</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
     
