@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear
 from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting, WarehouseStatusAudit
 
 
@@ -1214,3 +1214,29 @@ class InventoryApiTests(APITestCase):
         self.assertFalse(audit.previous_is_active)
         self.assertTrue(audit.new_is_active)
         self.assertEqual(audit.changed_by, self.user)
+
+
+    def test_stock_movement_posting_is_rejected_in_a_closed_fiscal_period(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="CLOSED-PERIOD-INV",
+            name_ar="مخزون فترة مغلقة",
+        )
+        warehouse = self._warehouse("CLOSED-PERIOD-WH")
+        FiscalPeriod.objects.create(
+            fiscal_year=self.fiscal_year, name="November",
+            start_date=date(2026, 11, 1), end_date=date(2026, 11, 30),
+            status=FiscalPeriod.Status.CLOSED,
+        )
+        movement = self._movement(
+            "CLOSED-PERIOD-MOVE", "receipt", destination=warehouse, quantity="2", cost="5",
+        )
+        self.assertEqual(movement.status_code, 201, movement.data)
+        posted = self.client.post(
+            f"/api/inventory/movements/{movement.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 400, posted.data)
+        self.assertEqual(
+            StockMovement.objects.get(pk=movement.data["id"]).status,
+            StockMovement.Status.DRAFT,
+        )
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=warehouse).exists())
