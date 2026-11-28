@@ -652,8 +652,6 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
         attempts = list(obj.approval_requests.all())
         latest = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
-        if obj.status != SalesInvoice.Status.DRAFT and latest and latest.requested_credit_limit is not None:
-            return latest.status
         limit = obj.discount_approval_limit
         lines = list(obj.lines.all())
         discount_exceeded = limit is not None and any(line.discount_percent > limit for line in lines)
@@ -661,6 +659,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             obj.invoice_approval_limit is not None
             and obj.grand_total > obj.invoice_approval_limit
         )
+        if obj.status != SalesInvoice.Status.DRAFT and latest and latest.requested_credit_limit is not None:
+            if latest.status == "approved":
+                return latest.status
+            if not discount_exceeded and not amount_exceeded:
+                return "not_required"
         from sales.services import customer_credit_exposure
         credit_exposure = customer_credit_exposure(obj.customer) if obj.customer.credit_limit > 0 else Decimal("0")
         credit_exceeded = (
