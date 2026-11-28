@@ -828,6 +828,19 @@ class SalesWorkflowTests(APITestCase):
 
         self.customer.credit_limit = Decimal("150")
         self.customer.save(update_fields=("credit_limit",))
+        rejected = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/reject/",
+            {"note": "يلزم تقديم مبرر تجاري أقوى"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.client.force_authenticate(self.user)
+        resubmitted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(resubmitted.status_code, 400, resubmitted.data)
+        approval = SalesInvoiceApproval.objects.filter(invoice_id=invoice.data["id"]).order_by("-requested_at", "-pk").first()
+        self.assertEqual(approval.status, SalesInvoiceApproval.Status.PENDING)
+        self.client.force_authenticate(manager)
         missing_reason = self.client.post(
             f"/api/approvals/requests/{approval.pk}/approve/", {}, format="json"
         )
