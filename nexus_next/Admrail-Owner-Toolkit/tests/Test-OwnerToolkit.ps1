@@ -58,7 +58,7 @@ Assert-True ($backupText.Contains('Remove-Item Env:\PGPASSWORD')) "Backup script
 Assert-True ($restoreText -match "TargetDatabase" -and $restoreText -match "must be different from the active database") "Restore must reject the active database as a target."
 Assert-True ($restoreText -match "django_migrations" -and $restoreText -match "information_schema.tables") "Restore must verify the restored schema and migration history."
 Assert-True ($launcherText -match "Admrail-Owner-Toolkit.ps1") "Launcher does not invoke the owner toolkit."
-Assert-True ($readmeText -match "does **not** download or install PostgreSQL" -and $readmeText -match "first/main ERP administrator account") "README must preserve the agreed split: owner manages PostgreSQL; ERP creates the company and first administrator."
+Assert-True ($readmeText.Contains("does **not** download or install PostgreSQL") -and $readmeText.Contains("first/main ERP administrator account")) "README must preserve the agreed split: owner manages PostgreSQL; ERP creates the company and first administrator."
 
 if ($Failures.Count -gt 0) {
     Write-Host ("FAILED: {0} checks passed; {1} failed." -f $Passed, $Failures.Count) -ForegroundColor Red
