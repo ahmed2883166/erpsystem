@@ -23,6 +23,28 @@ on:
       - "nexus_next/backend/inventory/api.py"
       - "nexus_next/backend/inventory/tests*.py"
       - ".github/workflows/admrail-concurrent-users.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
+      - "nexus_next/backend/scripts/benchmark_posting_concurrency.py"
+      - "nexus_next/backend/scripts/explain_accounting_reports.py"
+      - "nexus_next/backend/config/settings.py"
+      - "nexus_next/backend/requirements.txt"
+      - "nexus_next/backend/accounting/api.py"
+      - "nexus_next/backend/accounting/services.py"
+      - "nexus_next/backend/accounting/tests*.py"
+      - "nexus_next/backend/accounting/reconciliation.py"
+      - "nexus_next/backend/sales/api.py"
+      - "nexus_next/backend/sales/tests*.py"
+      - "nexus_next/backend/purchasing/api.py"
+      - "nexus_next/backend/purchasing/tests*.py"
+      - "nexus_next/backend/treasury/api.py"
+      - "nexus_next/backend/treasury/tests*.py"
+      - "nexus_next/backend/inventory/api.py"
+      - "nexus_next/backend/inventory/tests*.py"
+      - ".github/workflows/admrail-concurrent-users.yml"
   workflow_dispatch:
 concurrency:
   group: admrail-concurrent-users-benchmark
