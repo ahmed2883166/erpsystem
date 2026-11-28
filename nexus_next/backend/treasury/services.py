@@ -22,6 +22,37 @@ def _money(value):
     return Decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
+def reverse_linked_document_treasury_movement(*, journal_entry_id, reversal_journal_entry, user=None):
+    """Mark a bank mirror for an operational receipt reversed with its source journal."""
+    from .models import BankStatementLine, BankStatementMatchAllocation, TreasuryCheque
+
+    movement = TreasuryTransaction.objects.select_for_update().filter(
+        journal_entry_id=journal_entry_id,
+    ).first()
+    if movement is None:
+        return None
+    if movement.status != TreasuryTransaction.Status.POSTED or movement.reversal_journal_entry_id:
+        raise ValidationError("حركة البنك المرتبطة بسند القبض ليست في حالة تسمح بالعكس.")
+    if (
+        BankStatementLine.objects.filter(matched_transaction_id=movement.pk).exists()
+        or BankStatementMatchAllocation.objects.filter(transaction_id=movement.pk).exists()
+    ):
+        raise ValidationError("لا يمكن عكس سند القبض بعد مطابقته بنكيًا؛ فك المطابقة أولًا.")
+    if TreasuryCheque.objects.filter(treasury_transaction_id=movement.pk).exists():
+        raise ValidationError("لا يمكن عكس سند القبض المرتبط بشيك؛ عالج دورة الشيك أولًا.")
+
+    TreasuryTransaction.objects.filter(
+        pk=movement.pk, status=TreasuryTransaction.Status.POSTED,
+    ).update(
+        status=TreasuryTransaction.Status.REVERSED,
+        reversal_journal_entry=reversal_journal_entry,
+        reversed_at=timezone.now(),
+        reversed_by=user,
+    )
+    movement.refresh_from_db()
+    return movement
+
+
 def _foreign_position(account):
     """قفل مركز العملة، مع قبول الافتتاحي الأجنبي الموثق فقط."""
     created = False
