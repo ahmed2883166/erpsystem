@@ -3980,7 +3980,9 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
                     Decimal("20.0000"),
                 )
 
-    def test_landed_cost_posts_across_branches_without_duplicate_supplier_payable_and_can_reverse(self):
+    def test_landed_cost_weight_allocation_posts_across_branches_and_can_reverse(self):
+        self.product.unit_weight = Decimal("2.000000")
+        self.product.save(update_fields=("unit_weight",))
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         second_branch = Branch.objects.create(
             company=self.company, code="LC-BR-02", name_ar="فرع رسملة ثان",
@@ -4034,7 +4036,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             "allocations": [{
                 "source_invoice_line": source_line.pk,
                 "receipt_line": receipt_line_id,
-                "basis": "manual",
+                "basis": "weight",
                 "amount": "20.0000",
             }],
         }, format="json")
