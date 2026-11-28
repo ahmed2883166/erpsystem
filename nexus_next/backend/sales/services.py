@@ -16,7 +16,7 @@ from inventory.models import StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
 
 def _account(company, role):
@@ -310,8 +310,8 @@ def post_customer_receipt(receipt_id, user):
         batch_paid = CustomerReceiptBatchAllocation.objects.filter(
             invoice=invoice, allocation_date__lte=receipt.receipt_date,
         ).filter(
-            Q(batch__status="posted")
-            | Q(batch__status="reversed", batch__reversal_date__gt=receipt.receipt_date)
+            Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+            | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=receipt.receipt_date)
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
         returned = SalesReturn.objects.filter(
             invoice=invoice, return_date__lte=receipt.receipt_date,
