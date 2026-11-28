@@ -570,6 +570,10 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         )
         self.assertEqual(posted_customer_receipt.status_code, 200, posted_customer_receipt.data)
 
+        # Use the company-wide buyer membership for final cross-branch
+        # reconciliation; the receiver remains branch-restricted for operations.
+        self.client.force_authenticate(self.buyer)
+
         final_source_stock = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         final_destination_stock = StockBalance.objects.get(
             product=self.product, warehouse=destination_warehouse,
