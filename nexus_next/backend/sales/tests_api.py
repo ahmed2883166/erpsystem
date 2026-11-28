@@ -3277,3 +3277,50 @@ class SalesWorkflowTests(APITestCase):
             ).status_code,
             403,
         )
+
+
+    def test_partial_invoice_return_uses_original_delivery_unit_cost_in_draft_and_posting(self):
+        delivery_id, delivery_line_id = self._create_delivery("RET-PARTIAL-COST-DEL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "RET-PARTIAL-COST-INV",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "quantity": "1",
+                "unit_price": "100",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        # The delivery contains two units at 40 each (total cost 80), while
+        # this invoice contains only one unit. Returning that unit must carry
+        # 40 of cost, not the full delivery-line cost of 80.
+        created = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "RET-PARTIAL-COST-001",
+            "return_date": "2026-03-11",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["line_items"][0]["cost_amount"], "40.0000")
+
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["line_items"][0]["cost_amount"], "40.0000")
+        self.assertEqual(StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse
+        ).quantity, Decimal("4.0000"))
