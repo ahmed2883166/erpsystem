@@ -238,6 +238,18 @@ function Show-Logs {
             Format-Table -AutoSize
     }
 }
+function Invoke-InitialProvisioning {
+    $envFile = Join-Path $script:AppRoot "backend\.env"
+    if (Test-Path -LiteralPath $envFile -PathType Leaf) {
+        throw "يوجد backend\.env بالفعل. لن يتم استبدال إعدادات أو بيانات اتصال موجودة. استخدم إدارة القاعدة الحالية."
+    }
+    $provisioner = Join-Path $ToolkitRoot "Provision-Admrail-Database.ps1"
+    if (-not (Test-Path -LiteralPath $provisioner -PathType Leaf)) { throw "ملف تجهيز قاعدة البيانات غير موجود على وسيط المالك." }
+    Write-Host "سيتم إنشاء قاعدة جديدة ومستخدم تطبيق محدود الصلاحيات. لن يتم تعديل أي قاعدة موجودة." -ForegroundColor Yellow
+    & $provisioner -AppRoot $script:AppRoot
+    if ($LASTEXITCODE -ne 0) { throw "لم تكتمل عملية تجهيز قاعدة البيانات." }
+    Write-Log "Initial PostgreSQL provisioning completed."
+}
 function Invoke-DatabaseManager {
     $manager = Join-Path $script:AppRoot "scripts\Admrail-Database-Manager.ps1"
     if (-not (Test-Path -LiteralPath $manager -PathType Leaf)) {
@@ -276,6 +288,7 @@ try {
         Write-Host "4) Apply Django migrations (backup + explicit confirmation)"
         Write-Host "5) View toolkit/application logs"
         Write-Host "6) إدارة قواعد البيانات ومستخدمي PostgreSQL (مالك البرنامج فقط)"
+        Write-Host "7) تجهيز قاعدة AdmRail جديدة من الصفر (للتثبيت الأول فقط)"
         Write-Host "0) Exit"
         $choice = Read-Host "اختيارك"
         try {
@@ -286,6 +299,7 @@ try {
                 "4" { Invoke-Migrations }
                 "5" { Show-Logs }
                 "6" { Invoke-DatabaseManager }
+                "7" { Invoke-InitialProvisioning }
                 "0" { $script:ExitRequested = $true }
                 default { Write-Host "اختيار غير صحيح." -ForegroundColor Yellow }
             }
