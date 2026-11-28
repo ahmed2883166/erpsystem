@@ -763,7 +763,7 @@ class InventoryApiTests(APITestCase):
             "INACTIVE-HISTORY-NEW", "receipt", destination=warehouse,
             quantity="1", cost="10",
         )
-        self.assertEqual(blocked.status_code, 403, blocked.data)
+        self.assertEqual(blocked.status_code, 400, blocked.data)
         self.assertIn("مخزن موقوف", str(blocked.data))
 
     def test_stock_card_returns_opening_period_and_running_balances(self):
