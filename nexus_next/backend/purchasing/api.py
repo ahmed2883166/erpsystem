@@ -502,6 +502,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 raise ValidationError({"purchase_order": "أمر الشراء غير موجود داخل الشركة المحددة."})
             if not _purchase_warehouse_accessible(request.user, order.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(order.warehouse), order.supplier,
+            )
             # Lock all order lines in a stable order so concurrent draft receipts
             # cannot reserve the same remaining quantity.
             list(PurchaseOrderLine.objects.select_for_update().filter(
@@ -516,6 +519,10 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         warehouse = data["warehouse"]
         if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if data.get("purchase_order"):
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(warehouse), data["supplier"],
+            )
         serializer.save()
 
     @transaction.atomic
@@ -830,8 +837,15 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if invoice.receipt_id:
             if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+            supplier = serializer.validated_data.get("supplier", invoice.supplier)
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(invoice.receipt.warehouse), supplier,
+            )
         elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        else:
+            supplier = serializer.validated_data.get("supplier", invoice.supplier)
+            _check_branch_purchase_policy(invoice.branch, supplier)
         serializer.save()
 
     @transaction.atomic
