@@ -1570,6 +1570,19 @@ class InventoryValuationAssessmentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("المخزن موقوف أو لا تملك صلاحية الوصول إلى فرعه.")
         serializer.save(created_by=self.request.user)
 
+    def perform_update(self, serializer):
+        assessment = serializer.instance
+        self._check_assessment_write(assessment)
+        if assessment.status != InventoryValuationAssessment.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل تقييم مخزون مرحّل أو معكوس.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_assessment_write(instance)
+        if instance.status != InventoryValuationAssessment.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف تقييم مخزون مرحّل أو معكوس.")
+        instance.delete()
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         from .valuation import post_inventory_valuation_assessment
