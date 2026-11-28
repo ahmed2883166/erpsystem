@@ -12,7 +12,7 @@ from companies.access import ensure_fiscal_period_open, resolve_warehouse_branch
 from companies.models import FiscalYear
 from .models import (
     InventoryValuationAssessment, InventoryValuationAssessmentLine,
-    InventoryValuationLayerAdjustment, StockBalance, StockCostLayer, StockMovement,
+    InventoryValuationLayerAdjustment, Product, StockBalance, StockCostLayer, StockMovement, Warehouse,
 )
 
 
@@ -34,6 +34,9 @@ def post_inventory_valuation_assessment(assessment_id, user):
         raise ValidationError("لا يمكن تقييم صنف موقوف أو غير مخزني.")
     if not assessment.warehouse.is_active:
         raise ValidationError("لا يمكن تقييم مخزن موقوف.")
+    # Match stock-posting lock order: product, warehouse, then balances/layers.
+    Product.objects.select_for_update().get(pk=assessment.product_id)
+    Warehouse.objects.select_for_update().get(pk=assessment.warehouse_id)
 
     year = FiscalYear.objects.filter(
         company=assessment.company, status=FiscalYear.Status.OPEN,
@@ -197,6 +200,9 @@ def reverse_inventory_valuation_assessment(assessment_id, user, entry_date):
         raise ValidationError("تم عكس تقييم المخزون من قبل.")
     if entry_date < assessment.assessment_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ التقييم.")
+    # Serialize reversal against stock postings touching this product/warehouse.
+    Product.objects.select_for_update().get(pk=assessment.product_id)
+    Warehouse.objects.select_for_update().get(pk=assessment.warehouse_id)
     if StockMovement.objects.filter(
         company=assessment.company, status=StockMovement.Status.POSTED,
         posted_at__gt=assessment.posted_at,
