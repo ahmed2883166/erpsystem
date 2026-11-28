@@ -613,6 +613,24 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     "current_exposure": str(credit_exposure),
                     "invoice_amount": str(invoice.grand_total),
                 }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            latest = invoice.approval_requests.order_by("-requested_at", "-pk").first()
+            discount_exceeded = (
+                invoice.discount_approval_limit is not None
+                and invoice.lines.filter(discount_percent__gt=invoice.discount_approval_limit).exists()
+            )
+            amount_exceeded = (
+                invoice.invoice_approval_limit is not None
+                and invoice.grand_total > invoice.invoice_approval_limit
+            )
+            if (
+                latest and latest.status == SalesInvoiceApproval.Status.PENDING
+                and latest.requested_credit_limit is not None
+                and not discount_exceeded and not amount_exceeded
+            ):
+                latest.status = SalesInvoiceApproval.Status.SUPERSEDED
+                latest.decision_note = "لم يعد تجاوز حد الائتمان قائمًا قبل ترحيل الفاتورة."
+                latest.save()
         invoice.print_template_snapshot = _document_template_snapshot(invoice.company, SalesDocumentTemplate.DocumentType.INVOICE)
         invoice.save(update_fields=("print_template_snapshot",))
         invoice = post_sales_invoice(invoice.pk, request.user)
