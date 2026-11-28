@@ -25,6 +25,8 @@ const documentLabel = (kind: string) => ({
   sales_return_reversal: "عكس مردود مبيعات",
   fx_revaluation: "إعادة تقييم عملة",
   fx_revaluation_reversal: "عكس إعادة تقييم عملة",
+  customer_refund: "رد مبلغ للعميل",
+  customer_refund_reversal: "عكس رد مبلغ للعميل",
   payment: "دفعة",
   asset_invoice: "فاتورة شراء أصل",
   asset_payment: "سداد فاتورة أصل",
