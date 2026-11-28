@@ -201,7 +201,7 @@ export type LandedCostReport = {
   }[];
 };
 
-export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
+export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; product_unit_weight: string; product_unit_volume: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
 export type PurchaseInvoice = {
   id:number; company:number; supplier:number; supplier_name:string; activity:number|null;
   invoice_type:"inventory"|"direct_expense"; service_acceptance:number|null; service_acceptance_number:string|null;
@@ -869,7 +869,7 @@ export const api = {
 
 export type InventoryUnit = { id: number; company: number; code: string; name_ar: string; symbol: string; decimal_places: number; is_active: boolean };
 export type InventoryCategory = { id: number; company: number; code: string; name_ar: string; parent: number | null; is_active: boolean };
-export type Product = { id: number; company: number; category: number | null; category_name: string | null; unit: number; unit_name: string; code: string; barcode: string; name_ar: string; name_en: string; product_type: "goods" | "service"; stock_class: "raw_material" | "finished_goods" | "operating_supplies" | "spare_parts" | null; purchase_price: string; sale_price: string; costing_method: string; min_stock: string; track_expiry: boolean; is_active: boolean };
+export type Product = { id: number; company: number; category: number | null; category_name: string | null; unit: number; unit_name: string; code: string; barcode: string; name_ar: string; name_en: string; product_type: "goods" | "service"; stock_class: "raw_material" | "finished_goods" | "operating_supplies" | "spare_parts" | null; purchase_price: string; sale_price: string; unit_weight: string; unit_volume: string; costing_method: string; min_stock: string; track_expiry: boolean; is_active: boolean };
 export type Warehouse = { id: number; company: number; branch: number | null; branch_code: string; code: string; name_ar: string; address: string; is_active: boolean };
 // واجهات تعريفات المخزون: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const inventoryApi = {
