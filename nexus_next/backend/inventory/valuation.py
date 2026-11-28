@@ -214,7 +214,7 @@ def post_inventory_valuation_assessment(assessment_id, user):
 @transaction.atomic
 def reverse_inventory_valuation_assessment(assessment_id, user, entry_date):
     assessment = InventoryValuationAssessment.objects.select_for_update(of=("self",)).select_related(
-        "company", "product", "warehouse", "journal_entry",
+        "company", "product", "warehouse",
     ).get(pk=assessment_id)
     if assessment.status != InventoryValuationAssessment.Status.POSTED or not assessment.journal_entry_id:
         raise ValidationError("لا يمكن عكس إلا تقييم مخزون مرحّل.")
