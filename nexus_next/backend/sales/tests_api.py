@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
+from accounting.models import AccountRole, ChartOfAccount, FxSubledgerRevaluation, JournalEntry, JournalLine, TaxCode
+from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
@@ -1221,6 +1222,88 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(next_period.data["opening_balance"], "228.0000")
         self.assertEqual(next_period.data["closing_balance"], "228.0000")
         self.assertEqual(next_period.data["rows"], [])
+
+    def test_customer_statement_includes_fx_revaluation_and_its_reversal_once(self):
+        delivery_id, line_id = self._create_delivery("DEL-CUSTOMER-STATEMENT-FX")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-CUSTOMER-STATEMENT-FX", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        posted_invoice = SalesInvoice.objects.get(pk=invoice.data["id"])
+
+        ar = ChartOfAccount.objects.get(company=self.company, code="1200")
+        fx_gain = ChartOfAccount.objects.get(company=self.company, code="7210")
+        fiscal_year = FiscalYear.objects.get(company=self.company)
+        revaluation_journal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=fiscal_year,
+            entry_number=f"FX-STMT-{posted_invoice.pk}", entry_date=date(2026, 3, 15),
+            description="إعادة تقييم فاتورة عميل للاختبار",
+            source_type=JournalEntry.Source.FX_REVALUATION, created_by=self.user,
+        )
+        JournalLine.objects.create(
+            entry=revaluation_journal, account=ar, debit=Decimal("600"), credit=0,
+            description="زيادة رصيد العملاء بسبب إعادة التقييم",
+        )
+        JournalLine.objects.create(
+            entry=revaluation_journal, account=fx_gain, debit=0, credit=Decimal("600"),
+            description="ربح فروق عملة غير محقق",
+        )
+        revaluation_journal = post_journal(revaluation_journal.pk, actor=self.user)
+        FxSubledgerRevaluation.objects.create(
+            company=self.company, sales_invoice=posted_invoice,
+            revaluation_date=date(2026, 3, 15), rate_date=date(2026, 3, 15),
+            rate=Decimal("53"), foreign_balance=Decimal("200"),
+            previous_carrying_amount=Decimal("10000"),
+            new_carrying_amount=Decimal("10600"), difference=Decimal("600"),
+            journal_entry=revaluation_journal, created_by=self.user,
+        )
+
+        before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-01&date_to=2026-03-18"
+        )
+        self.assertEqual(before_reversal.status_code, 200, before_reversal.data)
+        self.assertEqual(before_reversal.data["closing_balance"], "828.0000")
+        self.assertEqual(
+            [row["document_type"] for row in before_reversal.data["rows"]],
+            ["invoice", "fx_revaluation"],
+        )
+
+        reversal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=fiscal_year,
+            entry_number=f"REV-FX-STMT-{posted_invoice.pk}", entry_date=date(2026, 3, 20),
+            description="عكس إعادة تقييم فاتورة عميل للاختبار",
+            source_type=JournalEntry.Source.MANUAL, reversal_of=revaluation_journal,
+            created_by=self.user,
+        )
+        JournalLine.objects.create(
+            entry=reversal, account=ar, debit=0, credit=Decimal("600"),
+            description="عكس زيادة رصيد العملاء",
+        )
+        JournalLine.objects.create(
+            entry=reversal, account=fx_gain, debit=Decimal("600"), credit=0,
+            description="عكس ربح فروق العملة",
+        )
+        post_journal(reversal.pk, actor=self.user)
+
+        after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
+        self.assertEqual(after_reversal.data["closing_balance"], "228.0000")
+        self.assertEqual(
+            [row["document_type"] for row in after_reversal.data["rows"]],
+            ["invoice", "fx_revaluation", "fx_revaluation_reversal"],
+        )
+        self.assertEqual(after_reversal.data["rows"][1]["debit"], "600.0000")
+        self.assertEqual(after_reversal.data["rows"][2]["credit"], "600.0000")
 
     def test_customer_statement_rejects_inaccessible_company(self):
         other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")

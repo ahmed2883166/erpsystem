@@ -751,6 +751,37 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     "description": f"عكس مردود المبيعات {sales_return.return_number}",
                     "debit": sales_return.grand_total, "credit": Decimal("0"), "sort": 3,
                 })
+        # FX revaluations affect the receivable control balance and must appear
+        # in the customer statement on their posting date, with reversals dated
+        # from the linked reversal journal rather than silently disappearing.
+        fx_revaluations = FxSubledgerRevaluation.objects.filter(
+            sales_invoice__in=invoices,
+        ).select_related("sales_invoice", "journal_entry__reversal_entry")
+        for revaluation in fx_revaluations:
+            journal = revaluation.journal_entry
+            if journal is None or not revaluation.difference:
+                continue
+            amount = abs(revaluation.difference)
+            increases_receivable = revaluation.difference > 0
+            events.append({
+                "date": journal.entry_date, "kind": "fx_revaluation",
+                "number": journal.entry_number,
+                "description": f"إعادة تقييم عملة الفاتورة {revaluation.sales_invoice.invoice_number}",
+                "debit": amount if increases_receivable else Decimal("0"),
+                "credit": Decimal("0") if increases_receivable else amount,
+                "sort": 2,
+            })
+            reversal = journal.reversal_entry if journal.status == JournalEntry.Status.REVERSED else None
+            if reversal:
+                events.append({
+                    "date": reversal.entry_date, "kind": "fx_revaluation_reversal",
+                    "number": reversal.entry_number,
+                    "description": f"عكس إعادة تقييم عملة الفاتورة {revaluation.sales_invoice.invoice_number}",
+                    "debit": Decimal("0") if increases_receivable else amount,
+                    "credit": amount if increases_receivable else Decimal("0"),
+                    "sort": 3,
+                })
+
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
