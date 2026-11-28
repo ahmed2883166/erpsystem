@@ -125,6 +125,9 @@ class CustomerLifecycleReconciliationTests(APITestCase):
             name_ar="بنك دورة العملاء", currency_code=self.company.base_currency.code,
         )
 
+    def _create_delivery(self, *args, **kwargs):
+        return SalesWorkflowTests._create_delivery(self, *args, **kwargs)
+
     def test_invoice_partial_receipt_batch_advance_refund_reversal_reconciles(self):
         delivery_id, delivery_line_id = self._create_delivery("DEL-CUSTOMER-LIFECYCLE")
         invoice_response = self.client.post("/api/sales-documents/invoices/", {
