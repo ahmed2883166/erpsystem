@@ -1154,6 +1154,15 @@ export type CustomerReceiptBatch = {
   reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
 };
 
+export type CustomerRefund = {
+  id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
+  source_receipt_batch:number;source_receipt_number:string;treasury_account:number;treasury_account_name:string;
+  refund_number:string;refund_date:string;amount:string;available_advance:string;
+  status:"draft"|"posted"|"reversed";treasury_transaction:number|null;journal_number:string|null;
+  reversal_treasury_transaction:number|null;reversal_journal_entry:number|null;reversal_journal_number:string|null;
+  reversal_date:string|null;created_by:number|null;created_at:string;
+};
+
 export type SalesPerformanceReport = {
   company:number;date_from:string;date_to:string;branch:number|null;customer_filter:number|null;product_filter:number|null;
   totals:{
@@ -1254,6 +1263,14 @@ export const salesApi = {
   allocateReceiptBatch: async (id:number,invoice:number,amount:string,allocation_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount,allocation_date})}); },
   // عكس سند قبض مجمع وقيد التحصيل المرتبط به.
   reverseReceiptBatch: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
+  // جلب مردودات الدفعات المقدمة للعملاء.
+  refunds: (companyId:number) => request<CustomerRefund[]>(`/api/sales-documents/refunds/?company=${companyId}&ordering=-refund_date`),
+  // إنشاء مردود على الجزء غير المخصص من سند القبض المجمع.
+  createRefund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>("/api/sales-documents/refunds/", {method:"POST",body:JSON.stringify(payload)}); },
+  // ترحيل مردود العميل وقيده وحركة الخزينة.
+  postRefund: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>(`/api/sales-documents/refunds/${id}/post/`, {method:"POST"}); },
+  // عكس مردود العميل وإعادة رصيده المقدم.
+  reverseRefund: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>(`/api/sales-documents/refunds/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
 };
 
 
