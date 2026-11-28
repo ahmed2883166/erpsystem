@@ -60,10 +60,19 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             raise ValidationError(detail) from exc
 
     def perform_update(self, serializer):
-        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
-        if serializer.instance.acquisition_journal_id or serializer.instance.acquisition_treasury_transaction_id or getattr(serializer.instance, "vendor_invoice", None):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق الشركة والفرع."""
+        instance = serializer.instance
+        company = serializer.validated_data.get("company", instance.company)
+        branch = serializer.validated_data.get("branch", instance.branch)
+        if company.pk != instance.company_id:
+            raise ValidationError({"company": "لا يمكن نقل سجل أصل ثابت بين الشركات."})
+        if not can_access_company(self.request.user, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى شركة الأصل.")
+        if not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل المحدد.")
+        if instance.acquisition_journal_id or instance.acquisition_treasury_transaction_id or getattr(instance, "vendor_invoice", None):
             raise ValidationError("الأصل المرتبط بحركة اقتناء أو فاتورة مورد أو المثبت محاسبيًا لا يمكن تعديل بياناته أو حساباته.")
-        self._write(serializer.instance.company_id)
+        self._write(company.pk)
         serializer.save()
 
     def perform_destroy(self, instance):
