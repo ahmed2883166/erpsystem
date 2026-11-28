@@ -1521,3 +1521,32 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         raise serializers.ValidationError("لا يمكن تعديل مستند الرسملة بعد إنشائه؛ احذف المسودة وأعد إنشاءها.")
+
+
+class BranchPurchasePolicySerializer(serializers.ModelSerializer):
+    branch_id = serializers.IntegerField(source="branch.id", read_only=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True)
+    allowed_supplier_ids = serializers.PrimaryKeyRelatedField(
+        source="allowed_suppliers", many=True, required=False,
+        queryset=Supplier.objects.all(),
+    )
+
+    class Meta:
+        from .models import BranchPurchasePolicy
+        model = BranchPurchasePolicy
+        fields = (
+            "id", "branch_id", "branch_name", "purchase_enabled",
+            "restrict_suppliers", "allowed_supplier_ids", "updated_at",
+        )
+        read_only_fields = ("id", "branch_id", "branch_name", "updated_at")
+
+    def validate(self, attrs):
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        suppliers = attrs.get("allowed_suppliers")
+        if branch and suppliers is not None:
+            invalid = [supplier.pk for supplier in suppliers if supplier.company_id != branch.company_id]
+            if invalid:
+                raise serializers.ValidationError({
+                    "allowed_supplier_ids": "كل الموردين المحددين يجب أن يتبعوا نفس شركة الفرع."
+                })
+        return attrs
