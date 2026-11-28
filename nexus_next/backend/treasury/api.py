@@ -328,6 +328,8 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         branch = serializer.validated_data.get("branch")
         self._scope(company_id)
         self._write(company_id)
+        if branch is None and not has_company_wide_branch_access(self.request.user, company_id):
+            raise PermissionDenied("إنشاء حساب خزينة عام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         if branch and not can_access_branch(self.request.user, branch.pk, company_id):
             raise PermissionDenied("لا تملك صلاحية إدارة حساب خزينة في هذا الفرع.")
         account = serializer.save()
@@ -391,6 +393,21 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                     foreign_amount=account.opening_foreign_amount,
                     carrying_base_amount=account.opening_balance,
                 )
+
+    def perform_update(self, serializer):
+        """حماية نطاق الفرع عند تعديل حساب الخزينة ومنع تحويل حساب فرعي إلى عام."""
+        instance = serializer.instance
+        company = serializer.validated_data.get("company", instance.company)
+        branch = serializer.validated_data.get("branch", instance.branch)
+        if company.pk != instance.company_id:
+            raise ValidationError({"company": "لا يمكن نقل حساب خزينة قائم إلى شركة أخرى."})
+        self._scope(company.pk)
+        self._write(company.pk)
+        if branch is None and not has_company_wide_branch_access(self.request.user, company.pk):
+            raise PermissionDenied("تحويل حساب خزينة إلى حساب عام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية إدارة حساب خزينة في هذا الفرع.")
+        serializer.save()
 
     @decorators.action(detail=False, methods=("get",), url_path="liquidity-summary")
     def liquidity_summary(self, request):
