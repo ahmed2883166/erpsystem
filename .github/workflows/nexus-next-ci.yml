@@ -20,6 +20,7 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -70,6 +71,10 @@ jobs:
         run: python manage.py test hr --verbosity 2
       - name: Run complete backend test suite
         run: python manage.py test --verbosity 2
+      - name: Benchmark stock card with 500,000 posted inventory movements
+        env:
+          RUN_INVENTORY_500K_BENCHMARK: "1"
+        run: python manage.py test inventory.tests_performance --verbosity 2
 
 
   postgres-backup-roundtrip:
