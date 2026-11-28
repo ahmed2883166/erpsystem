@@ -14,6 +14,14 @@ Base commit: `9682a4b98892dfdfe6d32301b2a165e4d0f8860f`
 
 Status: verified by source inspection and existing test coverage; broader sales and multi-branch end-to-end scenarios remain in the audit scope.
 
+
+### Treasury account branch-scope enforcement
+- Confirmed: `TreasuryAccountViewSet.get_queryset` hides unassigned/company-wide treasury accounts from users who cannot access every active branch, but the create path previously allowed those users to create an account with `branch=null`.
+- Confirmed: the generic update path previously allowed an accessible branch account with no financial history to be changed to `branch=null` without checking company-wide branch access.
+- Fix on this audit branch: require company-wide branch access for creating or changing an account to an unassigned/company-wide scope; re-check company and write role on update; prohibit moving an existing treasury account to another company.
+- Regression tests added: branch-limited users cannot create a company-wide treasury account and cannot change a branch treasury account to company-wide scope.
+- Validation: CI, PostgreSQL backend suite, CodeQL and concurrent-user workflow are running on the fix commit; result pending.
+
 ## Open review areas
 - Purchase -> partial receipt -> invoice -> payment -> GL and GRNI reconciliation.
 - Sales -> delivery -> invoice -> COGS -> collection -> customer statement and reports.
