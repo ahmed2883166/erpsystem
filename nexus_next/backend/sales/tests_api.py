@@ -1382,6 +1382,62 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(refreshed["paid_total"], "10000.0000")
         self.assertEqual(refreshed["balance_due"], "0.0000")
 
+    def test_customer_aging_uses_fx_revalued_receivable_as_of_date(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-AGING")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"),
+            (date(2026, 3, 31), "53"),
+        ):
+            ExchangeRate.objects.create(
+                company=self.company, currency=usd,
+                rate_date=rate_date, rate=Decimal(rate),
+            )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-FX-AGING",
+            "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        before_revaluation = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-30"
+        )
+        self.assertEqual(before_revaluation.status_code, 200, before_revaluation.data)
+        before_row = next(
+            row for customer in before_revaluation.data["customers"]
+            for row in customer["invoices"] if row["invoice"] == invoice_id
+        )
+        self.assertEqual(before_row["balance_due"], "10000.0000")
+        self.assertEqual(before_row["fx_revaluation_adjustment"], "0.0000")
+
+        revalued = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/revalue/",
+            {"revaluation_date": "2026-03-31", "rate_date": "2026-03-31", "rate": "53"},
+            format="json",
+        )
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+
+        after_revaluation = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(after_revaluation.status_code, 200, after_revaluation.data)
+        after_row = next(
+            row for customer in after_revaluation.data["customers"]
+            for row in customer["invoices"] if row["invoice"] == invoice_id
+        )
+        self.assertEqual(after_row["balance_due"], "10600.0000")
+        self.assertEqual(after_row["fx_revaluation_adjustment"], "600.0000")
+        self.assertEqual(after_revaluation.data["totals"]["total_due"], "10600.0000")
+
     def test_fx_revaluation_journal_can_be_reversed_before_any_later_settlement(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-REV")
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
