@@ -828,6 +828,10 @@ class SalesWorkflowTests(APITestCase):
 
         self.customer.credit_limit = Decimal("150")
         self.customer.save(update_fields=("credit_limit",))
+        missing_reason = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {}, format="json"
+        )
+        self.assertEqual(missing_reason.status_code, 400, missing_reason.data)
         approved = self.client.post(
             f"/api/approvals/requests/{approval.pk}/approve/",
             {"note": "استثناء ائتماني مبرر"}, format="json",
