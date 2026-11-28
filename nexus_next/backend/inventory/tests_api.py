@@ -1444,6 +1444,40 @@ class InventoryValuationNRVTests(APITestCase):
         self.assertEqual(balance.inventory_value, Decimal("105.00"))
         self.assertEqual(Decimal(recovery["adjustment_amount"]), Decimal("-5.00"))
 
+    def test_nrv_reassessment_after_transfer_keeps_parent_layer_original_cost(self):
+        source_balance = self._receive_stock()
+        self._assessment("NRV-TRANSFER-001", "8", "2026-03-11")
+        destination = Warehouse.objects.create(
+            company=self.company, branch=self.branch, code="NRV-WH-2", name_ar="مخزن وجهة تقييم",
+        )
+        transfer = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-TRANSFER-001", "movement_type": "transfer",
+            "movement_date": "2026-03-12", "source_warehouse": self.warehouse.pk,
+            "destination_warehouse": destination.pk,
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "0"}],
+        }, format="json")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        posted_transfer = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_transfer.status_code, 200, posted_transfer.data)
+        source_balance.refresh_from_db()
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination)
+        self.assertEqual(source_balance.inventory_value, Decimal("24.0000"))
+        self.assertEqual(destination_balance.inventory_value, Decimal("16.0000"))
+
+        recovery = self.client.post("/api/inventory/valuation-assessments/", {
+            "company": self.company.pk, "product": self.product.pk, "warehouse": destination.pk,
+            "assessment_number": "NRV-TRANSFER-002", "assessment_date": "2026-03-13",
+            "net_realizable_value_per_unit": "9",
+        }, format="json")
+        self.assertEqual(recovery.status_code, 201, recovery.data)
+        posted_recovery = self.client.post(
+            f"/api/inventory/valuation-assessments/{recovery.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_recovery.status_code, 200, posted_recovery.data)
+        destination_balance.refresh_from_db()
+        self.assertEqual(destination_balance.inventory_value, Decimal("18.0000"))
+        self.assertEqual(Decimal(posted_recovery.data["adjustment_amount"]), Decimal("-2.00"))
+
     def test_nrv_reversal_is_blocked_after_later_stock_movement(self):
         self._receive_stock()
         assessment = self._assessment("NRV-LATER-MOVE", "8", "2026-03-11")
