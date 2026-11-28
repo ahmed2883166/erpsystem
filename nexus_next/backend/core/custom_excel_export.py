@@ -194,11 +194,13 @@ class CustomExcelExportView(APIView):
         spec = EXPORTS[resource]
         model = spec["model"]
         if request.query_params.get("mode") == "fields":
-            return Response({
+            response = Response({
                 "resource": resource,
                 "label": spec["label"],
                 "fields": [{"key": name, "label": _field_label(model, name)} for name in spec["fields"]],
             })
+            response["Cache-Control"] = "no-store"
+            return response
 
         selected = [item for item in request.query_params.get("fields", "").split(",") if item]
         if not selected or len(selected) > len(spec["fields"]) or len(set(selected)) != len(selected):
@@ -237,11 +239,13 @@ class CustomExcelExportView(APIView):
         headers = [_field_label(model, field) for field in selected]
         sample = list(qs.values_list(*selected)[:10])
         if request.query_params.get("preview") == "1":
-            return Response({
+            response = Response({
                 "resource": resource, "total_rows": total, "preview_rows": [
                     [_plain(value) for value in row] for row in sample
                 ], "headers": headers,
             })
+            response["Cache-Control"] = "no-store"
+            return response
 
         if total > 100000:
             raise ValidationError({"detail": "عدد السجلات يتجاوز الحد الآمن للتصدير (100,000). استخدم الفلاتر لتقسيم الملف."})
