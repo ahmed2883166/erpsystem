@@ -10,12 +10,14 @@ on:
       - fix/audit-performance-and-owner-toolkit-2026-11
       - fix/purchasing-partial-invoices-safe
       - work/admrail-owner-toolkit-integration-2026-11-26
+      - feature/inventory-purchasing-complete-acceptance-2026-11-28
   pull_request:
     branches:
       - main
       - work/nexus-django-react-rebuild
       - feature/inventory-completion
       - work/admrail-main-consolidation-2026-11-25
+      - feature/inventory-purchasing-complete-acceptance-2026-11-28
 
 jobs:
   backend:
