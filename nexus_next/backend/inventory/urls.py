@@ -2,7 +2,7 @@ from rest_framework.routers import DefaultRouter
 
 from .api import (
     ProductCategoryViewSet, ProductViewSet, StockBalanceViewSet, StockMovementViewSet, StorageLocationViewSet, WarehouseProductSettingViewSet,
-    InventoryCountViewSet, InventoryCountLineViewSet,
+    InventoryCountViewSet, InventoryCountLineViewSet, InventoryValuationAssessmentViewSet,
     UnitOfMeasureViewSet, WarehouseViewSet,
 )
 from .transfer_api import StockTransferReceiptViewSet, StockTransferViewSet
@@ -19,6 +19,7 @@ router.register("transfers", StockTransferViewSet)
 router.register("transfer-receipts", StockTransferReceiptViewSet)
 router.register("counts", InventoryCountViewSet)
 router.register("count-lines", InventoryCountLineViewSet)
+router.register("valuation-assessments", InventoryValuationAssessmentViewSet)
 router.register("balances", StockBalanceViewSet)
 
 urlpatterns = router.urls

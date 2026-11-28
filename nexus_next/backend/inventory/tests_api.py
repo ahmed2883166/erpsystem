@@ -1343,3 +1343,154 @@ class InventoryApiTests(APITestCase):
         )
         self.assertEqual(len(receipt_rows), 1)
         self.assertEqual(receipt_rows[0]["receipt_number"], f"TR-{transfer_id}-R1")
+
+
+class InventoryValuationNRVTests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(code="NRV", name_ar="شركة تقييم المخزون", country="EG", activity="commercial", base_currency=currency)
+        self.branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        self.year = FiscalYear.objects.create(company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        self.user = get_user_model().objects.create_user(username="nrv_user", password="test-password")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(self.user)
+        self.unit = UnitOfMeasure.objects.create(company=self.company, code="PCS", name_ar="قطعة")
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="NRV-001", name_ar="صنف تقييم", costing_method="fifo")
+        self.warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="NRV-WH", name_ar="مخزن تقييم")
+        inventory = ChartOfAccount.objects.create(company=self.company, code="1000", name_ar="المخزون", nature=ChartOfAccount.Nature.ASSET)
+        grni = ChartOfAccount.objects.create(company=self.company, code="2100", name_ar="بضاعة مستلمة غير مفوترة", nature=ChartOfAccount.Nature.LIABILITY)
+        cogs = ChartOfAccount.objects.create(company=self.company, code="5100", name_ar="تكلفة المبيعات", nature=ChartOfAccount.Nature.EXPENSE)
+        loss = ChartOfAccount.objects.create(company=self.company, code="5900", name_ar="خسائر تخفيض المخزون", nature=ChartOfAccount.Nature.EXPENSE)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.INVENTORY, account=inventory)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, account=grni)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.COGS, account=cogs)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, account=loss)
+
+    def _receive_stock(self):
+        created = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-RCV-001", "movement_type": "receipt",
+            "movement_date": "2026-03-10", "destination_warehouse": self.warehouse.pk,
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_cost": "10"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+
+    def _assessment(self, number, nrv, day):
+        created = self.client.post("/api/inventory/valuation-assessments/", {
+            "company": self.company.pk, "product": self.product.pk, "warehouse": self.warehouse.pk,
+            "assessment_number": number, "assessment_date": day,
+            "net_realizable_value_per_unit": nrv,
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/valuation-assessments/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return posted.data
+
+    def test_nrv_write_down_partial_reversal_and_full_document_reversal_reconcile_to_gl(self):
+        balance = self._receive_stock()
+        first = self._assessment("NRV-001", "8", "2026-03-11")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("40.00"))
+        self.assertEqual(Decimal(first["adjustment_amount"]), Decimal("10.00"))
+        first_entry = JournalEntry.objects.get(pk=first["journal_entry"])
+        self.assertEqual(first_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(first_entry.lines.get(debit__gt=0).debit, Decimal("10.00"))
+
+        second = self._assessment("NRV-002", "9", "2026-03-12")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("45.00"))
+        self.assertEqual(Decimal(second["adjustment_amount"]), Decimal("-5.00"))
+
+        reversed_second = self.client.post(
+            f"/api/inventory/valuation-assessments/{second['id']}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(reversed_second.status_code, 200, reversed_second.data)
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("40.00"))
+
+        reversed_first = self.client.post(
+            f"/api/inventory/valuation-assessments/{first['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_first.status_code, 200, reversed_first.data)
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("50.00"))
+        self.assertEqual(balance.average_cost, Decimal("10.000000"))
+
+    def test_weighted_average_nrv_reassessment_after_receipt_uses_original_cost_basis(self):
+        self.product.costing_method = Product.CostingMethod.WEIGHTED_AVERAGE
+        self.product.save(update_fields=("costing_method",))
+        balance = self._receive_stock()
+        self._assessment("NRV-WAVG-001", "8", "2026-03-11")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("40.00"))
+
+        receipt = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-WAVG-RCV-002", "movement_type": "receipt",
+            "movement_date": "2026-03-12", "destination_warehouse": self.warehouse.pk,
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_cost": "12"}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+
+        recovery = self._assessment("NRV-WAVG-002", "10.5", "2026-03-13")
+        balance.refresh_from_db()
+        self.assertEqual(balance.inventory_value, Decimal("105.00"))
+        self.assertEqual(Decimal(recovery["adjustment_amount"]), Decimal("-5.00"))
+
+    def test_nrv_reassessment_after_transfer_keeps_parent_layer_original_cost(self):
+        source_balance = self._receive_stock()
+        self._assessment("NRV-TRANSFER-001", "8", "2026-03-11")
+        destination = Warehouse.objects.create(
+            company=self.company, branch=self.branch, code="NRV-WH-2", name_ar="مخزن وجهة تقييم",
+        )
+        transfer = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-TRANSFER-001", "movement_type": "transfer",
+            "movement_date": "2026-03-12", "source_warehouse": self.warehouse.pk,
+            "destination_warehouse": destination.pk,
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "0"}],
+        }, format="json")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        posted_transfer = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_transfer.status_code, 200, posted_transfer.data)
+        source_balance.refresh_from_db()
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination)
+        self.assertEqual(source_balance.inventory_value, Decimal("24.0000"))
+        self.assertEqual(destination_balance.inventory_value, Decimal("16.0000"))
+
+        recovery = self.client.post("/api/inventory/valuation-assessments/", {
+            "company": self.company.pk, "product": self.product.pk, "warehouse": destination.pk,
+            "assessment_number": "NRV-TRANSFER-002", "assessment_date": "2026-03-13",
+            "net_realizable_value_per_unit": "9",
+        }, format="json")
+        self.assertEqual(recovery.status_code, 201, recovery.data)
+        posted_recovery = self.client.post(
+            f"/api/inventory/valuation-assessments/{recovery.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_recovery.status_code, 200, posted_recovery.data)
+        destination_balance.refresh_from_db()
+        self.assertEqual(destination_balance.inventory_value, Decimal("18.0000"))
+        self.assertEqual(Decimal(posted_recovery.data["adjustment_amount"]), Decimal("-2.00"))
+
+    def test_nrv_reversal_is_blocked_after_later_stock_movement(self):
+        self._receive_stock()
+        assessment = self._assessment("NRV-LATER-MOVE", "8", "2026-03-11")
+        issue = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "NRV-ISSUE-001", "movement_type": "issue",
+            "movement_date": "2026-03-12", "source_warehouse": self.warehouse.pk,
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "0"}],
+        }, format="json")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        posted_issue = self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_issue.status_code, 200, posted_issue.data)
+        rejected = self.client.post(
+            f"/api/inventory/valuation-assessments/{assessment['id']}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)

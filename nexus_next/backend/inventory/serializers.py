@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, InventoryValuationAssessment, Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -49,7 +49,7 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = (
             "id", "company", "category", "category_name", "unit", "unit_name",
             "code", "barcode", "name_ar", "name_en", "product_type", "stock_class",
-            "purchase_price", "sale_price", "costing_method", "min_stock",
+            "purchase_price", "sale_price", "unit_weight", "unit_volume", "costing_method", "min_stock",
             "track_expiry", "is_active", "created_at", "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
@@ -470,4 +470,39 @@ class InventoryCountSerializer(serializers.ModelSerializer):
                 open_count = open_count.exclude(pk=self.instance.pk)
             if open_count.exists():
                 raise serializers.ValidationError({"warehouse": "يوجد مستند جرد مفتوح بالفعل على هذا المخزن."})
+        return attrs
+
+
+class InventoryValuationAssessmentSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, allow_null=True)
+
+    class Meta:
+        model = InventoryValuationAssessment
+        fields = (
+            "id", "company", "product", "product_code", "product_name", "warehouse", "warehouse_name",
+            "assessment_number", "assessment_date", "net_realizable_value_per_unit", "status",
+            "quantity", "carrying_value_before", "carrying_value_after", "adjustment_amount",
+            "journal_entry", "journal_number", "reversal_journal_entry", "reversal_journal_number",
+            "notes", "created_at", "posted_at", "reversed_at",
+        )
+        read_only_fields = (
+            "status", "quantity", "carrying_value_before", "carrying_value_after", "adjustment_amount",
+            "journal_entry", "journal_number", "reversal_journal_entry", "reversal_journal_number",
+            "created_at", "posted_at", "reversed_at",
+        )
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        product = attrs.get("product", getattr(self.instance, "product", None))
+        warehouse = attrs.get("warehouse", getattr(self.instance, "warehouse", None))
+        if company and product and (product.company_id != company.pk or product.product_type != Product.ProductType.GOODS):
+            raise serializers.ValidationError({"product": "اختر صنفًا مخزنيًا يتبع الشركة المحددة."})
+        if company and warehouse and warehouse.company_id != company.pk:
+            raise serializers.ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+        if self.instance and self.instance.status != InventoryValuationAssessment.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل تقييم مخزون مرحّل أو معكوس.")
         return attrs

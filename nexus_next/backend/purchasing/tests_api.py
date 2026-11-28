@@ -3903,12 +3903,19 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
 
 
 
-    def test_landed_cost_automatic_value_and_quantity_allocation_preserves_exact_total(self):
+    def test_landed_cost_automatic_value_quantity_weight_and_volume_allocation_preserves_exact_total(self):
+        self.product.unit_weight = Decimal("1.000000")
+        self.product.unit_volume = Decimal("0.250000")
+        self.product.save(update_fields=("unit_weight", "unit_volume"))
         _, first_receipt_line_id = self._create_and_post_receipt()
+        second_product = Product.objects.create(
+            company=self.company, unit=self.unit, code="P-2", name_ar="صنف 2",
+            unit_weight=Decimal("3.000000"), unit_volume=Decimal("1.000000"),
+        )
         second_receipt = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
             "receipt_number": "GR-LC-AUTO-02", "receipt_date": "2026-03-11",
-            "lines": [{"product": self.product.pk, "quantity": "3", "unit_cost": "50"}],
+            "lines": [{"product": second_product.pk, "quantity": "3", "unit_cost": "50"}],
         }, format="json")
         self.assertEqual(second_receipt.status_code, 201, second_receipt.data)
         second_receipt_id = second_receipt.data["id"]
@@ -3927,7 +3934,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
                 "description": "شحن",
                 "expense_account": expense.pk,
                 "billed_quantity": "1",
-                "unit_price": "40.0000",
+                "unit_price": "80.0000",
                 "tax_rate": "0",
             }],
         }, format="json")
@@ -3941,6 +3948,8 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         cases = (
             ("value", "LC-AUTO-VALUE", ["11.4286", "8.5714"]),
             ("quantity", "LC-AUTO-QUANTITY", ["8.0000", "12.0000"]),
+            ("weight", "LC-AUTO-WEIGHT", ["3.6364", "16.3636"]),
+            ("volume", "LC-AUTO-VOLUME", ["2.8571", "17.1429"]),
         )
         for basis, document_number, expected in cases:
             with self.subTest(basis=basis):
@@ -3971,7 +3980,9 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
                     Decimal("20.0000"),
                 )
 
-    def test_landed_cost_posts_across_branches_without_duplicate_supplier_payable_and_can_reverse(self):
+    def test_landed_cost_weight_allocation_posts_across_branches_and_can_reverse(self):
+        self.product.unit_weight = Decimal("2.000000")
+        self.product.save(update_fields=("unit_weight",))
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         second_branch = Branch.objects.create(
             company=self.company, code="LC-BR-02", name_ar="فرع رسملة ثان",
@@ -4024,8 +4035,8 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             "document_date": "2026-03-14",
             "allocations": [{
                 "source_invoice_line": source_line.pk,
-                "receipt_line": receipt_line_id,
-                "basis": "manual",
+                "receipt_lines": [receipt_line_id],
+                "basis": "weight",
                 "amount": "20.0000",
             }],
         }, format="json")

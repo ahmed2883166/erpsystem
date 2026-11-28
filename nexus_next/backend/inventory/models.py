@@ -86,6 +86,8 @@ class Product(models.Model):
     stock_class = models.CharField(max_length=20, choices=StockClass.choices, default=StockClass.FINISHED_GOODS, null=True, blank=True)
     purchase_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     sale_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
+    unit_weight = models.DecimalField(max_digits=18, decimal_places=6, default=0, validators=[MinValueValidator(0)])
+    unit_volume = models.DecimalField(max_digits=18, decimal_places=6, default=0, validators=[MinValueValidator(0)])
     costing_method = models.CharField(max_length=20, choices=CostingMethod.choices, default=CostingMethod.WEIGHTED_AVERAGE)
     min_stock = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     track_expiry = models.BooleanField(default=False)
@@ -350,6 +352,79 @@ class StockBalance(models.Model):
         indexes = [models.Index(fields=("warehouse", "product"), name="inv_balance_wh_product_idx")]
 
 
+
+
+class InventoryValuationAssessment(models.Model):
+    """تقييم مخزون وفق الأقل من التكلفة وصافي القيمة البيعية (IAS 2)."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="inventory_valuation_assessments")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="valuation_assessments")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="valuation_assessments")
+    assessment_number = models.CharField(max_length=40)
+    assessment_date = models.DateField()
+    net_realizable_value_per_unit = models.DecimalField(max_digits=20, decimal_places=6, validators=[MinValueValidator(0)])
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    quantity = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    carrying_value_before = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    carrying_value_after = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    adjustment_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="inventory_valuation_assessment")
+    reversal_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="inventory_valuation_assessment_reversal")
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_inventory_valuation_assessments")
+    posted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="posted_inventory_valuation_assessments")
+    posted_at = models.DateTimeField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-assessment_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "assessment_number"), name="uq_inv_valuation_company_no")]
+        indexes = [models.Index(fields=("company", "warehouse", "product", "status"), name="inv_val_assess_scope_idx")]
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.company_id or self.product.product_type != Product.ProductType.GOODS):
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("تقييم المخزون بعد ترحيله غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+
+class InventoryValuationAssessmentLine(models.Model):
+    """يحفظ القيمة السابقة والمعدلة لكل بُعد رصيد داخل تقييم NRV."""
+    assessment = models.ForeignKey(InventoryValuationAssessment, on_delete=models.PROTECT, related_name="lines")
+    balance = models.ForeignKey(StockBalance, on_delete=models.PROTECT, related_name="valuation_assessment_lines")
+    quantity = models.DecimalField(max_digits=20, decimal_places=4)
+    original_average_cost = models.DecimalField(max_digits=20, decimal_places=6)
+    previous_average_cost = models.DecimalField(max_digits=20, decimal_places=6)
+    adjusted_average_cost = models.DecimalField(max_digits=20, decimal_places=6)
+    previous_inventory_value = models.DecimalField(max_digits=20, decimal_places=4)
+    adjusted_inventory_value = models.DecimalField(max_digits=20, decimal_places=4)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("assessment", "balance"), name="uq_inv_val_assess_balance")]
+
+
+class InventoryValuationLayerAdjustment(models.Model):
+    """يحفظ أثر التقييم على طبقة التكلفة مع تكلفة الأصل اللازمة لحدود عكس التخفيض."""
+    line = models.ForeignKey(InventoryValuationAssessmentLine, on_delete=models.PROTECT, related_name="layer_adjustments")
+    layer = models.ForeignKey("inventory.StockCostLayer", on_delete=models.PROTECT, related_name="valuation_adjustments")
+    original_unit_cost = models.DecimalField(max_digits=20, decimal_places=8)
+    previous_unit_cost = models.DecimalField(max_digits=20, decimal_places=8)
+    adjusted_unit_cost = models.DecimalField(max_digits=20, decimal_places=8)
+    quantity_remaining = models.DecimalField(max_digits=20, decimal_places=4)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("line", "layer"), name="uq_inv_val_line_layer")]
 
 
 class StockCostLayer(models.Model):

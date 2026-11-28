@@ -16,11 +16,11 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting, WarehouseStatusAudit
+from .models import InventoryCount, InventoryCountLine, InventoryValuationAssessment, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting, WarehouseStatusAudit
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
-    InventoryCountSerializer, InventoryCountLineSerializer,
+    InventoryCountSerializer, InventoryCountLineSerializer, InventoryValuationAssessmentSerializer,
 )
 
 
@@ -1529,3 +1529,75 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "count": total, "truncated": total > 5000, "rows": rows,
             "basis": "on_hand_minus_open_sales_orders_plus_open_purchase_orders",
         })
+
+
+class InventoryValuationAssessmentViewSet(viewsets.ModelViewSet):
+    """إدارة تقييم المخزون بصافي القيمة البيعية مع قيد وعكس قابلين للتدقيق."""
+    serializer_class = InventoryValuationAssessmentSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = InventoryValuationAssessment.objects.select_related(
+        "company", "product", "warehouse", "warehouse__branch", "journal_entry", "reversal_journal_entry",
+    ).prefetch_related("lines__layer_adjustments")
+    filterset_fields = ("company", "product", "warehouse", "status", "assessment_date")
+    search_fields = ("assessment_number", "product__code", "product__name_ar", "warehouse__name_ar")
+    ordering_fields = ("assessment_date", "assessment_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return qs
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
+
+    def _check_assessment_write(self, assessment):
+        if not can_access_company(self.request.user, assessment.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, assessment.company_id, ("admin", "accountant")):
+            raise PermissionDenied("تقييم المخزون متاح لمدير الشركة والمحاسب فقط.")
+        if not _can_access_warehouse(self.request.user, assessment.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        warehouse = serializer.validated_data["warehouse"]
+        if not can_access_company(self.request.user, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company.pk, ("admin", "accountant")):
+            raise PermissionDenied("إنشاء تقييم المخزون متاح لمدير الشركة والمحاسب فقط.")
+        if not warehouse.is_active or not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("المخزن موقوف أو لا تملك صلاحية الوصول إلى فرعه.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        assessment = serializer.instance
+        self._check_assessment_write(assessment)
+        if assessment.status != InventoryValuationAssessment.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل تقييم مخزون مرحّل أو معكوس.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_assessment_write(instance)
+        if instance.status != InventoryValuationAssessment.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف تقييم مخزون مرحّل أو معكوس.")
+        instance.delete()
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        from .valuation import post_inventory_valuation_assessment
+        assessment = self.get_object()
+        self._check_assessment_write(assessment)
+        result = post_inventory_valuation_assessment(assessment.pk, request.user)
+        return Response(self.get_serializer(result).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    def reverse(self, request, pk=None):
+        from .valuation import reverse_inventory_valuation_assessment
+        assessment = self.get_object()
+        self._check_assessment_write(assessment)
+        entry_date = parse_date(request.data.get("entry_date", ""))
+        if not entry_date:
+            raise ValidationError({"entry_date": "أدخل تاريخ عكس صحيحًا."})
+        result = reverse_inventory_valuation_assessment(assessment.pk, request.user, entry_date)
+        return Response(self.get_serializer(result).data, status=status.HTTP_200_OK)
