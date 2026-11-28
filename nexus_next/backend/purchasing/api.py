@@ -80,13 +80,20 @@ def _purchase_branch_for_warehouse(warehouse):
     ).order_by("-is_head_office", "code").first()
 
 
-class BranchPurchasePolicyViewSet(PurchaseBaseViewSet):
+class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
+    permission_classes = (CompanyRolePermission,)
     serializer_class = BranchPurchasePolicySerializer
     queryset = BranchPurchasePolicy.objects.select_related("branch", "branch__company").prefetch_related("allowed_suppliers")
 
     def get_queryset(self):
         companies = accessible_companies(self.request.user)
         return self.queryset.filter(branch__company__in=companies)
+
+    def _check_write(self, company_id):
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("إدارة سياسة الشراء متاحة لمدير الشركة والمحاسب فقط.")
 
     def perform_create(self, serializer):
         branch = serializer.validated_data["branch"]
@@ -172,6 +179,9 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         self._check_write(data["company"].pk)
         if not _purchase_warehouse_accessible(self.request.user, data["warehouse"]):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(data["warehouse"]), data["supplier"],
+        )
         serializer.save()
 
     def perform_update(self, serializer):
@@ -181,6 +191,8 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         warehouse = serializer.validated_data.get("warehouse", order.warehouse)
         if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        supplier = serializer.validated_data.get("supplier", order.supplier)
+        _check_branch_purchase_policy(_purchase_branch_for_warehouse(warehouse), supplier)
         serializer.save()
 
     @transaction.atomic
@@ -210,6 +222,9 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         """اعتماد المستند ونقله إلى الحالة التالية وفق دورة العمل."""
         order = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
         self._check_write(order.company_id)
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(order.warehouse), order.supplier,
+        )
         if order.status != PurchaseOrder.Status.DRAFT:
             raise ValidationError("أمر الشراء ليس مسودة.")
         if not order.lines.exists():
@@ -784,6 +799,11 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             receipt = data["receipt"]
             if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+            _check_branch_purchase_policy(
+                _purchase_branch_for_warehouse(receipt.warehouse), data["supplier"],
+            )
+        if data.get("invoice_type", PurchaseInvoice.InvoiceType.INVENTORY) == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            _check_branch_purchase_policy(data["branch"], data["supplier"])
         serializer.save()
 
     @transaction.atomic
