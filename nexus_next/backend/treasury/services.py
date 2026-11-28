@@ -225,7 +225,7 @@ def post_treasury_transaction(transaction_id, user=None):
 
             if available < doc.amount:
                 raise ValidationError(
-                    f"الرصيد المتاح في تاريخ الحركة ({available}) أقل من مبلغ الحركة ({doc.amount})."
+                    f"الرصيد المتاح غير كافٍ في تاريخ الحركة ({available}) لتغطية مبلغ الحركة ({doc.amount})."
                 )
             for change in later_movements:
                 available += change
