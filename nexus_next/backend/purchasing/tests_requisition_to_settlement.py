@@ -508,7 +508,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             company=self.company, code="1101", name_ar="بنك فرع الاستلام",
             nature=ChartOfAccount.Nature.ASSET,
         )
-        destination_bank = TreasuryAccount.objects.create(
+        TreasuryAccount.objects.create(
             company=self.company, branch=destination_branch,
             account=destination_bank_account, kind=TreasuryAccount.Kind.BANK,
             code="BANK-REQE2E-DEST", name_ar="بنك فرع الاستلام",
