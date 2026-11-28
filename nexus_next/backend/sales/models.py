@@ -771,8 +771,7 @@ class CustomerReceiptBatch(models.Model):
     @property
     def unallocated_amount(self):
         refunded = self.refunds.filter(
-            models.Q(status=CustomerRefund.Status.POSTED)
-            | models.Q(status=CustomerRefund.Status.REVERSED, reversal_date__isnull=True)
+            status=CustomerRefund.Status.POSTED,
         ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
         return max(self.amount - self.allocated_amount - refunded, Decimal("0"))
 
