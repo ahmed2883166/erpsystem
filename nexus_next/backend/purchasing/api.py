@@ -87,7 +87,10 @@ class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         companies = accessible_companies(self.request.user)
-        return self.queryset.filter(branch__company__in=companies)
+        return self.queryset.filter(
+            branch__company__in=companies,
+            branch__in=accessible_branches(self.request.user),
+        )
 
     def _check_write(self, company_id):
         if not can_access_company(self.request.user, company_id):
@@ -98,6 +101,8 @@ class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         branch = serializer.validated_data["branch"]
         self._check_write(branch.company_id)
+        if BranchPurchasePolicy.objects.filter(branch=branch).exists():
+            raise ValidationError({"branch": "سياسة شراء هذا الفرع مسجلة بالفعل."})
         if not can_access_branch(self.request.user, branch.pk, branch.company_id):
             raise PermissionDenied("لا تملك صلاحية إدارة سياسة هذا الفرع.")
         policy = serializer.save(updated_by=self.request.user)
@@ -519,10 +524,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         warehouse = data["warehouse"]
         if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
-        if data.get("purchase_order"):
-            _check_branch_purchase_policy(
-                _purchase_branch_for_warehouse(warehouse), data["supplier"],
-            )
+        _check_branch_purchase_policy(
+            _purchase_branch_for_warehouse(warehouse), data["supplier"],
+        )
         serializer.save()
 
     @transaction.atomic
