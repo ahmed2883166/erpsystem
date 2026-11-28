@@ -27,13 +27,14 @@ export default function CustomExcelExportButton({ resource, companyId, branchId 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const templateKey = `admrail-export-template:${resource}`;
-  const selectedFields = useMemo(() => fields.filter(field => selected.includes(field.key)), [fields, selected]);
+  const selectedFields = useMemo(() => selected.map(key => fields.find(field => field.key === key)).filter((field): field is ExportField => Boolean(field)), [fields, selected]);
 
   useEffect(() => {
     if (!open || !companyId) return;
     let cancelled = false;
     setBusy(true);
     setError("");
+    setPreview(null);
     const query = new URLSearchParams({ resource, company: String(companyId), mode: "fields" });
     fetch(`/api/exports/custom-excel/?${query}`, { credentials: "same-origin" })
       .then(async response => {
