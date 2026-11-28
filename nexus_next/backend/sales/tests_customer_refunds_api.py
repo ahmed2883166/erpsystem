@@ -5,6 +5,7 @@ from django.db.models import Sum
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from companies.models import FiscalYear
 from sales.tests_api import SalesWorkflowTests
 from treasury.models import TreasuryAccount, TreasuryTransaction
 
@@ -48,7 +49,10 @@ class CustomerRefundApiTests(APITestCase):
             nature=ChartOfAccount.Nature.EXPENSE if credit else ChartOfAccount.Nature.REVENUE,
         )
         entry = JournalEntry.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
+            company=self.company, branch=self.branch,
+            fiscal_year=FiscalYear.objects.get(
+                company=self.company, start_date__lte=movement_date, end_date__gte=movement_date,
+            ),
             entry_number=number, entry_date=movement_date,
             description="حركة اختبار على حساب خزينة مردودات العملاء",
         )
