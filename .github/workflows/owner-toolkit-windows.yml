@@ -1,0 +1,27 @@
+name: Owner Toolkit Windows Checks
+
+on:
+  pull_request:
+    paths:
+      - "nexus_next/Admrail-Owner-Toolkit/**"
+      - "nexus_next/scripts/Admrail-Database-Manager.ps1"
+      - "nexus_next/scripts/backup-postgres.ps1"
+      - "nexus_next/scripts/restore-postgres-to-new-db.ps1"
+      - "nexus_next/scripts/initialize-backup-encryption.ps1"
+      - ".github/workflows/owner-toolkit-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-static-safety:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run PowerShell syntax and safety checks
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\nexus_next\Admrail-Owner-Toolkit\tests\Test-OwnerToolkit.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
