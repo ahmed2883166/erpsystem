@@ -1,0 +1,162 @@
+"""Safe configurable Excel exports for operational master data."""
+from datetime import date, datetime
+from decimal import Decimal
+from io import BytesIO
+
+from django.http import HttpResponse
+from openpyxl import Workbook
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from companies.access import (
+    accessible_branches, can_access_company, has_company_role,
+    has_company_wide_branch_access,
+)
+from customers.models import Customer
+from hr.models import Employee
+from inventory.models import Product
+from suppliers.models import Supplier
+from treasury.models import TreasuryAccount
+
+
+EXPORTS = {
+    "inventory": {
+        "model": Product,
+        "label": "المخزون - الأصناف",
+        "fields": ("code", "barcode", "name_ar", "name_en", "product_type", "stock_class",
+                   "category", "unit", "purchase_price", "sale_price", "costing_method",
+                   "min_stock", "track_expiry", "is_active", "created_at"),
+    },
+    "customers": {
+        "model": Customer,
+        "label": "العملاء",
+        "fields": ("code", "customer_type", "name_ar", "name_en", "tax_number", "phone",
+                   "mobile", "email", "address", "credit_limit", "payment_terms_days",
+                   "default_discount_percent", "is_active", "created_at"),
+    },
+    "suppliers": {
+        "model": Supplier,
+        "label": "الموردون",
+        "fields": ("code", "supplier_type", "name_ar", "name_en", "tax_number", "phone",
+                   "mobile", "email", "address", "credit_limit", "payment_terms_days",
+                   "is_active", "created_at"),
+    },
+    "bank": {
+        "model": TreasuryAccount,
+        "label": "الحسابات البنكية والخزائن",
+        "fields": ("code", "kind", "name_ar", "bank_name", "account_number", "iban",
+                   "currency_code", "opening_balance", "branch", "is_active", "created_at"),
+    },
+    "employees": {
+        "model": Employee,
+        "label": "الموظفون",
+        "fields": ("code", "full_name_ar", "full_name_en", "national_id", "insurance_number",
+                   "email", "phone", "branch", "department", "position", "contract_type",
+                   "hire_date", "contract_end_date", "termination_date", "status",
+                   "basic_salary", "currency", "payment_method", "bank_name", "bank_account",
+                   "cost_center", "created_at"),
+    },
+}
+
+
+def _field_label(model, name):
+    field = model._meta.get_field(name)
+    return str(field.verbose_name)
+
+
+def _queryset_for(resource, company_id, user):
+    spec = EXPORTS[resource]
+    qs = spec["model"].objects.filter(company_id=company_id)
+    if resource == "employees":
+        qs = qs.filter(branch__in=accessible_branches(user, company_id))
+    elif resource == "bank":
+        branches = accessible_branches(user, company_id)
+        qs = qs.filter(branch__in=branches)
+        if has_company_wide_branch_access(user, company_id):
+            from django.db.models import Q
+            qs = spec["model"].objects.filter(company_id=company_id).filter(Q(branch__in=branches) | Q(branch__isnull=True))
+    return qs.order_by("pk")
+
+
+def _plain(value):
+    if value is None:
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
+
+
+class CustomExcelExportView(APIView):
+    """Metadata, preview and XLSX export with the same validated field selection."""
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        resource = request.query_params.get("resource", "")
+        if resource not in EXPORTS:
+            raise ValidationError({"resource": "قسم التصدير غير مدعوم."})
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "يجب تحديد شركة صحيحة."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("تصدير البيانات متاح لمدير الشركة والمحاسب فقط.")
+
+        spec = EXPORTS[resource]
+        model = spec["model"]
+        if request.query_params.get("mode") == "fields":
+            return Response({
+                "resource": resource,
+                "label": spec["label"],
+                "fields": [{"key": name, "label": _field_label(model, name)} for name in spec["fields"]],
+            })
+
+        selected = [item for item in request.query_params.get("fields", "").split(",") if item]
+        if not selected or len(selected) > len(spec["fields"]) or len(set(selected)) != len(selected):
+            raise ValidationError({"fields": "اختر عمودًا واحدًا على الأقل دون تكرار."})
+        invalid = set(selected) - set(spec["fields"])
+        if invalid:
+            raise ValidationError({"fields": "توجد أعمدة غير مسموح بتصديرها."})
+
+        qs = _queryset_for(resource, company_id, request.user)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            if resource not in ("bank", "employees"):
+                raise ValidationError({"branch": "تصفية الفرع غير متاحة لهذا القسم."})
+            if not accessible_branches(request.user, company_id).filter(pk=branch_id).exists():
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            qs = qs.filter(branch_id=branch_id)
+
+        total = qs.count()
+        headers = [_field_label(model, field) for field in selected]
+        sample = list(qs.values_list(*selected)[:10])
+        if request.query_params.get("preview") == "1":
+            return Response({
+                "resource": resource, "total_rows": total, "preview_rows": [
+                    [_plain(value) for value in row] for row in sample
+                ], "headers": headers,
+            })
+
+        if total > 100000:
+            raise ValidationError({"detail": "عدد السجلات يتجاوز الحد الآمن للتصدير (100,000). استخدم الفلاتر لتقسيم الملف."})
+
+        workbook = Workbook(write_only=True)
+        sheet = workbook.create_sheet(title=spec["label"][:31])
+        sheet.append(headers)
+        for row in qs.values_list(*selected).iterator(chunk_size=2000):
+            sheet.append([_plain(value) for value in row])
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{resource}-export.xlsx"'
+        response["Cache-Control"] = "no-store"
+        return response
