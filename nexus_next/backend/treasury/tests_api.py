@@ -1417,6 +1417,73 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.counter_gl = ChartOfAccount.objects.create(company=self.company, code="4100", name_ar="حساب مقابل", nature=ChartOfAccount.Nature.REVENUE)
         self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.bank_gl, kind="bank", code="BANK-CHQ", name_ar="البنك الرئيسي")
 
+    def test_branch_limited_user_cannot_move_cheque_to_an_inaccessible_branch(self):
+        created = self._create_incoming("MOVE-BRANCH-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع غير متاح",
+        )
+        other_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="بنك الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_gl,
+            kind="bank", code="BANK-CHQ-2", name_ar="بنك الفرع الثاني",
+        )
+        limited = get_user_model().objects.create_user(
+            username="cheque-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        response = self.client.patch(
+            f"/api/treasury/cheques/{created.data['id']}/",
+            {"branch": other_branch.pk, "bank_account": other_bank.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        cheque = TreasuryCheque.objects.get(pk=created.data["id"])
+        self.assertEqual(cheque.branch_id, self.branch.pk)
+        self.assertEqual(cheque.bank_account_id, self.bank.pk)
+
+    def test_cheque_cannot_be_moved_to_another_company(self):
+        created = self._create_incoming("MOVE-COMPANY-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        other_company = Company.objects.create(
+            code="CHQ2", name_ar="شركة أخرى", country="EG",
+            activity="commercial", base_currency=self.company.base_currency,
+        )
+        other_branch = Branch.objects.create(
+            company=other_company, code="MAIN", name_ar="الرئيسي",
+        )
+        other_year = FiscalYear.objects.create(
+            company=other_company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        other_gl = ChartOfAccount.objects.create(
+            company=other_company, code="1110", name_ar="بنك آخر",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_bank = TreasuryAccount.objects.create(
+            company=other_company, branch=other_branch, account=other_gl,
+            kind="bank", code="BANK-OTHER", name_ar="بنك آخر",
+        )
+        response = self.client.patch(
+            f"/api/treasury/cheques/{created.data['id']}/",
+            {
+                "company": other_company.pk, "branch": other_branch.pk,
+                "fiscal_year": other_year.pk, "bank_account": other_bank.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        cheque = TreasuryCheque.objects.get(pk=created.data["id"])
+        self.assertEqual(cheque.company_id, self.company.pk)
+
     def _create_incoming(self, number="IN-001"):
         return self.client.post("/api/treasury/cheques/", {
             "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
@@ -1831,6 +1898,50 @@ class PettyCashWorkflowTests(APITestCase):
             JournalLine(entry=opening, account=self.equity_gl, debit=0, credit=Decimal("1000")),
         ])
         post_journal(opening.pk, actor=self.user)
+
+    def test_branch_limited_user_cannot_move_petty_cash_fund_to_an_inaccessible_branch(self):
+        fund_id = self._create_fund()
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع غير متاح",
+        )
+        other_cash_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1102", name_ar="خزينة الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_petty_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="عهدة الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_cash = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_cash_gl,
+            kind="cash", code="CASH-PC-2", name_ar="خزينة الفرع الثاني",
+        )
+        other_petty = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_petty_gl,
+            kind="cash", code="PETTY-PC-2", name_ar="عهدة الفرع الثاني",
+        )
+        limited = get_user_model().objects.create_user(
+            username="petty-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        response = self.client.patch(
+            f"/api/treasury/petty-cash-funds/{fund_id}/",
+            {
+                "branch": other_branch.pk, "funding_account": other_cash.pk,
+                "petty_cash_account": other_petty.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        fund = PettyCashFund.objects.get(pk=fund_id)
+        self.assertEqual(fund.branch_id, self.branch.pk)
+        self.assertEqual(fund.funding_account_id, self.cash.pk)
+        self.assertEqual(fund.petty_cash_account_id, self.petty_account.pk)
 
     def _create_fund(self):
         response = self.client.post("/api/treasury/petty-cash-funds/", {
