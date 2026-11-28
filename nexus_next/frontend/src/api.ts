@@ -871,6 +871,7 @@ export type InventoryUnit = { id: number; company: number; code: string; name_ar
 export type InventoryCategory = { id: number; company: number; code: string; name_ar: string; parent: number | null; is_active: boolean };
 export type Product = { id: number; company: number; category: number | null; category_name: string | null; unit: number; unit_name: string; code: string; barcode: string; name_ar: string; name_en: string; product_type: "goods" | "service"; stock_class: "raw_material" | "finished_goods" | "operating_supplies" | "spare_parts" | null; purchase_price: string; sale_price: string; unit_weight: string; unit_volume: string; costing_method: string; min_stock: string; track_expiry: boolean; is_active: boolean };
 export type Warehouse = { id: number; company: number; branch: number | null; branch_code: string; code: string; name_ar: string; address: string; is_active: boolean };
+export type InventoryValuationAssessment = { id:number; company:number; product:number; product_code:string; product_name:string; warehouse:number; warehouse_name:string; assessment_number:string; assessment_date:string; net_realizable_value_per_unit:string; status:"draft"|"posted"|"reversed"; quantity:string; carrying_value_before:string; carrying_value_after:string; adjustment_amount:string; journal_entry:number|null; journal_number:string|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; notes:string; created_at:string; posted_at:string|null; reversed_at:string|null };
 // واجهات تعريفات المخزون: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const inventoryApi = {
   // جلب وحدات قياس الأصناف للشركة.
@@ -883,6 +884,10 @@ export const inventoryApi = {
   warehouses: (companyId: number) => request<Warehouse[]>(`/api/inventory/warehouses/?company=${companyId}&ordering=code`),
   // جلب مواقع التخزين داخل مخازن الشركة.
   locations: (companyId: number) => request<InventoryLocation[]>(`/api/inventory/locations/?warehouse__company=${companyId}&ordering=code`),
+  valuationAssessments: (companyId: number) => request<InventoryValuationAssessment[]>(`/api/inventory/valuation-assessments/?company=${companyId}&ordering=-assessment_date`),
+  createValuationAssessment: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryValuationAssessment>("/api/inventory/valuation-assessments/", { method: "POST", body: JSON.stringify(payload) }); },
+  postValuationAssessment: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryValuationAssessment>(`/api/inventory/valuation-assessments/${id}/post/`, { method: "POST", body: JSON.stringify({}) }); },
+  reverseValuationAssessment: async (id: number, entry_date: string) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryValuationAssessment>(`/api/inventory/valuation-assessments/${id}/reverse/`, { method: "POST", body: JSON.stringify({ entry_date }) }); },
   // إنشاء وحدة قياس جديدة.
   createUnit: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryUnit>("/api/inventory/units/", { method: "POST", body: JSON.stringify(payload) }); },
   // إنشاء فئة أصناف جديدة.
