@@ -352,7 +352,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             "company": self.company.pk, "as_of": return_reversal_date.isoformat(),
         })
         self.assertEqual(aging.status_code, 200, aging.data)
-        self.assertEqual(aging.data["totals"]["total_due"], "0.0000")
+        self.assertEqual(Decimal(aging.data["totals"]["total_due"]), Decimal("0"))
 
         reconciliation = self.client.get(
             f"/api/accounting/subledger-reconciliation/?company={self.company.pk}"
