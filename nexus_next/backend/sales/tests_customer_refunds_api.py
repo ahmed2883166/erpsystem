@@ -1,8 +1,9 @@
 from decimal import Decimal
 
+from django.db.models import Sum
 from rest_framework.test import APITestCase
 
-from accounting.models import ChartOfAccount, JournalEntry
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from sales.tests_api import SalesWorkflowTests
 from treasury.models import TreasuryAccount, TreasuryTransaction
 
@@ -237,7 +238,7 @@ class CustomerLifecycleReconciliationTests(APITestCase):
         self.assertEqual(Decimal(customer_row["difference"]), Decimal("0"))
 
         receivable_account = ChartOfAccount.objects.get(
-            company=self.company, account_roles__role="accounts_receivable",
+            company=self.company, account_roles__role=AccountRole.Role.ACCOUNTS_RECEIVABLE,
         )
         bank_account = self.bank_treasury.account
         for account, expected_balance in (
