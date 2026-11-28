@@ -140,7 +140,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                 (invoice_line.transaction_tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                 if invoice.transaction_currency_id else None
             )
-            cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001")) if source else Decimal("0")
+            cost = (source.cost_amount * quantity / source.quantity).quantize(Decimal("0.0001")) if source else Decimal("0")
             SalesReturnLine.objects.create(
                 sales_return=sales_return, invoice_line=invoice_line,
                 movement_line=movement_line, quantity=quantity,
@@ -186,7 +186,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                     (invoice_line.transaction_tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                     if sales_return.invoice.transaction_currency_id else None
                 )
-                cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001")) if source else Decimal("0")
+                cost = (source.cost_amount * quantity / source.quantity).quantize(Decimal("0.0001")) if source else Decimal("0")
                 SalesReturnLine.objects.create(
                     sales_return=sales_return, invoice_line=invoice_line,
                     movement_line=movement_line, quantity=quantity,
