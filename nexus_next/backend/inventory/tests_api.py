@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting, WarehouseStatusAudit
 
 
 class InventoryApiTests(APITestCase):
@@ -1182,3 +1182,35 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(report.status_code, 200, report.data)
         self.assertEqual(report.data["count"], 1)
         self.assertEqual(report.data["results"][0]["movement_number"], "PENDING-MOVE-001")
+
+
+    def test_warehouse_reopening_is_admin_only_and_audited(self):
+        warehouse = Warehouse.objects.create(
+            company=self.company, branch=self.branch, code="WH-REOPEN",
+            name_ar="مخزن متوقف", is_active=False,
+        )
+        accountant = get_user_model().objects.create_user(
+            username="warehouse_reopen_accountant", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=accountant, company=self.company, role="accountant", all_branches=True,
+        )
+        self.client.force_authenticate(accountant)
+        denied = self.client.patch(
+            f"/api/inventory/warehouses/{warehouse.pk}/",
+            {"is_active": True}, format="json",
+        )
+        self.assertEqual(denied.status_code, 403, denied.data)
+        self.assertFalse(Warehouse.objects.get(pk=warehouse.pk).is_active)
+
+        self.client.force_authenticate(self.user)
+        reopened = self.client.patch(
+            f"/api/inventory/warehouses/{warehouse.pk}/",
+            {"is_active": True}, format="json",
+        )
+        self.assertEqual(reopened.status_code, 200, reopened.data)
+        self.assertTrue(Warehouse.objects.get(pk=warehouse.pk).is_active)
+        audit = WarehouseStatusAudit.objects.get(warehouse=warehouse)
+        self.assertFalse(audit.previous_is_active)
+        self.assertTrue(audit.new_is_active)
+        self.assertEqual(audit.changed_by, self.user)
