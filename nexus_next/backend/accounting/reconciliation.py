@@ -234,7 +234,7 @@ class SubledgerReconciliationView(APIView):
             | (
                 Q(status=CustomerRefund.Status.REVERSED)
                 & (
-                    Q(reversal_date__gt=as_of)
+                    Q(reversal_journal_entry__entry_date__gt=as_of)
                     | Q(reversal_date__isnull=True)
                     | Q(reversal_journal_entry__isnull=True)
                     | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
