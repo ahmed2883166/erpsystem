@@ -21,6 +21,7 @@ Base: main at 9682a4b98892dfdfe6d32301b2a165e4d0f8860f
 8. Companies/branches/activities: membership, permissions, data isolation, inter-branch controls and configuration.
 9. HR boundary: verify access boundaries and export only; do not alter payroll or HR business logic.
 10. Platform: authentication, authorization, audit trail, input validation, SQL safety, concurrency, performance, backup/restore, Windows/LAN deployment and frontend reliability.
+11. Legacy Flask/SQLite modules and compatibility paths: compare critical accounting, sales, purchasing and stock rules with the Django/PostgreSQL application; verify there is no accidental split-brain behavior or unsafe data migration.
 
 ## Required end-to-end scenarios
 - Purchase -> partial receipt -> stock -> supplier invoice -> payment -> GL/reports.
