@@ -2065,13 +2065,13 @@ class PurchasingWorkflowTests(APITestCase):
             company=self.company, branch=self.branch, account=bank,
             kind=TreasuryAccount.Kind.BANK, code="BANK-REFUND-FUTURE",
             name_ar="بنك اختبار عكس الاسترداد", currency_code="EGP",
-            opening_balance=Decimal("114"),
+            opening_balance=Decimal("228"),
         )
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk,
             "invoice": invoice.data["id"], "payment_number": "PAY-REFUND-FUTURE",
             "payment_date": "2026-03-11", "method": "bank",
-            "payment_account": bank.pk, "amount": "114",
+            "payment_account": bank.pk, "amount": "228",
         }, format="json")
         self.assertEqual(payment.status_code, 201, payment.data)
         posted_payment = self.client.post(
