@@ -954,9 +954,20 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
         self.assertEqual(posted_refund.data["status"], "posted")
 
-        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
-        self.assertEqual(balance.quantity, Decimal("1.0000"))
-        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination_warehouse)
+        self.assertEqual(
+            (source_balance.quantity, source_balance.inventory_value),
+            (Decimal("1.0000"), Decimal("100.0000")),
+        )
+        self.assertEqual(
+            (destination_balance.quantity, destination_balance.inventory_value),
+            (Decimal("0.0000"), Decimal("0.0000")),
+        )
+        self.assertEqual(
+            source_balance.inventory_value + destination_balance.inventory_value,
+            Decimal("100.0000"),
+        )
         self.assertEqual(
             JournalLine.objects.filter(account__code="2100", entry__company=self.company).aggregate(
                 debit=Sum("debit"), credit=Sum("credit"),
@@ -3434,14 +3445,67 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(purchase_posted.status_code, 200, purchase_posted.data)
 
-        # Sale: issue one of the two received units, then recognize revenue and receivable.
+        # Move one unit to a second branch before sale. The transfer must preserve
+        # the inventory cost and post balanced inter-branch clearing entries.
+        destination_branch = Branch.objects.create(
+            company=self.company, code="CYCLE-BR-02", name_ar="فرع دورة المخزون",
+        )
+        destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=destination_branch,
+            code="CYCLE-WH-02", name_ar="مخزن فرع دورة المخزون",
+        )
+        transfer = StockMovement.objects.create(
+            company=self.company, movement_number="CYCLE-XFER-001",
+            movement_type=StockMovement.MovementType.TRANSFER,
+            movement_date=date(2026, 3, 11),
+            source_warehouse=self.warehouse,
+            destination_warehouse=destination_warehouse,
+            created_by=self.user,
+        )
+        transfer_line = StockMovementLine.objects.create(
+            movement=transfer, product=self.product, quantity=Decimal("1"),
+        )
+        post_stock_movement(transfer.pk, self.user)
+        source_after_transfer = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+        )
+        destination_after_transfer = StockBalance.objects.get(
+            product=self.product, warehouse=destination_warehouse,
+        )
+        self.assertEqual(
+            (source_after_transfer.quantity, source_after_transfer.inventory_value),
+            (Decimal("1.0000"), Decimal("100.0000")),
+        )
+        self.assertEqual(
+            (destination_after_transfer.quantity, destination_after_transfer.inventory_value),
+            (Decimal("1.0000"), Decimal("100.0000")),
+        )
+        self.assertEqual(transfer_line.cost_amount, Decimal("100.0000"))
+        transfer_entries = [
+            link.journal_entry for link in transfer.journal_links.select_related("journal_entry")
+        ]
+        self.assertEqual(len(transfer_entries), 2)
+        clearing = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING,
+        ).account
+        clearing_net = sum(
+            (
+                (entry.lines.filter(account=clearing).aggregate(total=Sum("debit"))["total"] or Decimal("0"))
+                - (entry.lines.filter(account=clearing).aggregate(total=Sum("credit"))["total"] or Decimal("0"))
+                for entry in transfer_entries
+            ),
+            Decimal("0"),
+        )
+        self.assertEqual(clearing_net, Decimal("0.0000"))
+
+        # Sale: issue one of the two received units from the destination branch.
         customer = Customer.objects.create(
             company=self.company, code="CYCLE-CUS-001", name_ar="عميل اختبار الدورة",
         )
         delivery = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk,
             "customer": customer.pk,
-            "warehouse": self.warehouse.pk,
+            "warehouse": destination_warehouse.pk,
             "delivery_number": "CYCLE-DEL-001",
             "delivery_date": "2026-03-12",
             "lines": [{"product": self.product.pk, "quantity": "1"}],
@@ -3488,7 +3552,7 @@ class PurchasingWorkflowTests(APITestCase):
             entry__company=self.company, entry__status=JournalEntry.Status.POSTED,
             account=inventory,
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        self.assertEqual(inventory_totals["debit"] - inventory_totals["credit"], balance.inventory_value)
+        self.assertEqual(inventory_totals["debit"] - inventory_totals["credit"], source_balance.inventory_value + destination_balance.inventory_value)
 
         cogs = ChartOfAccount.objects.get(company=self.company, code="5100")
         cogs_total = JournalLine.objects.filter(
