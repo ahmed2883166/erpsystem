@@ -1543,6 +1543,8 @@ class BranchPurchasePolicySerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if self.instance and "branch" in attrs and attrs["branch"].pk != self.instance.branch_id:
+            raise serializers.ValidationError({"branch": "لا يمكن نقل سياسة شراء قائمة إلى فرع آخر."})
         suppliers = attrs.get("allowed_suppliers")
         if branch and suppliers is not None:
             invalid = [supplier.pk for supplier in suppliers if supplier.company_id != branch.company_id]
