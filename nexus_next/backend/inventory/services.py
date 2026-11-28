@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -13,9 +14,33 @@ from .models import InventoryCount, Product, StockBalance, StockCostConsumption,
 def post_stock_movement(movement_id, user, *, inventory_count_id=None):
     """ترحيل حركة المخزون وتحديث الأرصدة وطبقات التكلفة وأثرها المحاسبي."""
     # Lock only the movement row; nullable warehouse joins cannot be locked in PostgreSQL.
-    movement = StockMovement.objects.select_for_update().get(pk=movement_id)
+    movement = StockMovement.objects.select_for_update().select_related("company").get(pk=movement_id)
     if movement.status != StockMovement.Status.DRAFT:
         raise ValidationError("الحركة مرحلة بالفعل أو غير قابلة للترحيل.")
+
+    # Stock quantities and their accounting consequences must never be posted
+    # into a closed fiscal year/month. Check every affected branch before writes.
+    from companies.access import ensure_fiscal_period_open, resolve_warehouse_branch
+    from companies.models import FiscalYear
+
+    affected_warehouses = [
+        warehouse for warehouse in (movement.source_warehouse, movement.destination_warehouse)
+        if warehouse is not None
+    ]
+    for warehouse in affected_warehouses:
+        branch = resolve_warehouse_branch(movement.company, warehouse)
+        if not branch or not branch.is_active:
+            raise ValidationError("لا يمكن ترحيل حركة مخزون دون فرع نشط مرتبط بالمخزن.")
+        fiscal_year = FiscalYear.objects.filter(
+            company=movement.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=movement.movement_date, end_date__gte=movement.movement_date,
+        ).order_by("-start_date").first()
+        if not fiscal_year:
+            raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ حركة المخزون.")
+        try:
+            ensure_fiscal_period_open(fiscal_year, movement.movement_date)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages) from exc
     lines = list(movement.lines.select_related("product").order_by("product_id", "id"))
     if not lines:
         raise ValidationError("لا يمكن ترحيل حركة بدون أصناف.")
