@@ -1,4 +1,3 @@
-from datetime import date
 from decimal import Decimal
 
 from rest_framework.test import APITestCase
