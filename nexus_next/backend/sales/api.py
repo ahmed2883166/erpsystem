@@ -753,7 +753,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 and refund.reversal_journal_entry.status == JournalEntry.Status.POSTED
             ):
                 events.append({
-                    "date": refund.reversal_date or refund.reversal_journal_entry.entry_date,
+                    "date": refund.reversal_journal_entry.entry_date,
                     "kind": "customer_refund_reversal",
                     "number": f"REV-{refund.refund_number}",
                     "description": f"عكس رد المبلغ للعميل {refund.refund_number}",
@@ -1006,8 +1006,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 | (
                     Q(status=CustomerRefund.Status.REVERSED)
                     & (
-                        Q(reversal_date__gt=as_of)
-                        | Q(reversal_date__isnull=True)
+                        Q(reversal_journal_entry__entry_date__gt=as_of)
                         | Q(reversal_journal_entry__isnull=True)
                         | ~Q(reversal_journal_entry__status=JournalEntry.Status.POSTED)
                     )
