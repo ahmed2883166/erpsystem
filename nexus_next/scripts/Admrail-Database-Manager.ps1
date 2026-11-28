@@ -93,7 +93,19 @@ function Save-VerifiedBackup([string]$Db) {
     if ([IO.Path]::GetPathRoot($folder).TrimEnd('\') -ieq "C:") { throw "اختر قرصًا غير C." }
     Ensure-BackupEncryption
     $tag = Get-Date -Format "yyyyMMdd_HHmmss"
-    $plain = Join-Path $env:TEMP "admrail-$tag.dump"
+    $secureTempRoot = Join-Path ([IO.Path]::GetTempPath()) "AdmrailOwnerToolkit"
+    New-Item -ItemType Directory -Force -Path $secureTempRoot | Out-Null
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & (Join-Path $env:SystemRoot "System32\icacls.exe") $secureTempRoot /inheritance:r /grant:r "$($identity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "تعذر تأمين مجلد الملفات المؤقتة؛ أُلغيت عملية النسخ قبل إنشاء dump غير مشفر." }
+    $operationTemp = Join-Path $secureTempRoot ([guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $operationTemp | Out-Null
+    & (Join-Path $env:SystemRoot "System32\icacls.exe") $operationTemp /inheritance:r /grant:r "$($identity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $operationTemp -Recurse -Force -ErrorAction SilentlyContinue
+        throw "تعذر تقييد صلاحيات مجلد النسخة المؤقتة."
+    }
+    $plain = Join-Path $operationTemp "database.dump"
     $enc = Join-Path $folder "admrail-$Db-$tag.dump.nexusenc"
     try {
         $env:PGPASSWORD = $script:AdminPassword
@@ -107,8 +119,10 @@ function Save-VerifiedBackup([string]$Db) {
         Write-Host "تم حفظ نسخة مشفرة والتحقق منها: $enc" -ForegroundColor Green
         return $enc
     } finally {
-        if (Test-Path $plain) { Remove-Item $plain -Force -ErrorAction SilentlyContinue }
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+        if ($operationTemp -and (Test-Path -LiteralPath $operationTemp -PathType Container)) {
+            Remove-Item -LiteralPath $operationTemp -Recurse -Force -ErrorAction Stop
+        }
     }
 }
 function Update-Db {
