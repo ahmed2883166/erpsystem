@@ -48,6 +48,29 @@ class CashCommitmentApiTests(APITestCase):
         payload.update(overrides)
         return self.client.post("/api/treasury/commitments/", payload, format="json")
 
+    def test_branch_limited_user_cannot_change_commitment_to_company_wide_scope(self):
+        created = self._create_commitment()
+        self.assertEqual(created.status_code, 201, created.data)
+        Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع آخر",
+        )
+        limited = get_user_model().objects.create_user(
+            username="commitment-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.patch(
+            f"/api/treasury/commitments/{created.data['id']}/",
+            {"branch": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        commitment = CashCommitment.objects.get(pk=created.data["id"])
+        self.assertEqual(commitment.branch_id, self.branch.pk)
+
     def test_create_commitment_is_forecast_only_and_does_not_post_journal(self):
         before = JournalEntry.objects.filter(company=self.company).count()
         response = self._create_commitment()
