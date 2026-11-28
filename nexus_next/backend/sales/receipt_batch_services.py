@@ -307,6 +307,12 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         reversal = reverse_operational_journal(
             batch.journal_entry_id, user, entry_date, JournalEntry.Source.SALES,
         )
+        from treasury.services import reverse_linked_document_treasury_movement
+        reverse_linked_document_treasury_movement(
+            journal_entry_id=batch.journal_entry_id,
+            reversal_journal_entry=reversal,
+            user=user,
+        )
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
