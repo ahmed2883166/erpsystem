@@ -60,7 +60,9 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "product_type": line.product.product_type, "quantity": str(line.quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type,
+            "product_unit_weight": str(line.product.unit_weight), "product_unit_volume": str(line.product.unit_volume),
+            "quantity": str(line.quantity),
             "unit_cost": str(line.unit_cost), "cost_amount": str(line.cost_amount),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         } for line in obj.stock_movement.lines.select_related("product").all()]
@@ -1418,8 +1420,11 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"allocations": "التوزيع اليدوي يتطلب بند استلام واحدًا لكل مبلغ."})
                 shares = [amount]
             else:
-                if basis not in (LandedCostAllocation.Basis.VALUE, LandedCostAllocation.Basis.QUANTITY):
-                    raise serializers.ValidationError({"allocations": "أساس التوزيع المتاح حاليًا هو القيمة أو الكمية أو اليدوي؛ الوزن والحجم غير متاحين لعدم وجود بيانات فعلية للصنف."})
+                if basis not in (
+                    LandedCostAllocation.Basis.VALUE, LandedCostAllocation.Basis.QUANTITY,
+                    LandedCostAllocation.Basis.WEIGHT, LandedCostAllocation.Basis.VOLUME,
+                ):
+                    raise serializers.ValidationError({"allocations": "أساس التوزيع غير مدعوم."})
                 receipt_lines = row.get("receipt_lines") or []
                 if row.get("receipt_line") or not receipt_lines:
                     raise serializers.ValidationError({"allocations": "التوزيع الآلي يتطلب اختيار عدة بنود استلام في حقل receipt_lines."})
@@ -1427,9 +1432,24 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"allocations": "لا تكرر بند الاستلام داخل نفس عملية التوزيع."})
                 weights = []
                 for receipt in receipt_lines:
-                    weight = receipt.quantity if basis == LandedCostAllocation.Basis.QUANTITY else receipt.cost_amount
+                    if basis == LandedCostAllocation.Basis.QUANTITY:
+                        weight = receipt.quantity
+                    elif basis == LandedCostAllocation.Basis.VALUE:
+                        weight = receipt.cost_amount
+                    elif basis == LandedCostAllocation.Basis.WEIGHT:
+                        weight = receipt.quantity * receipt.product.unit_weight
+                    else:
+                        weight = receipt.quantity * receipt.product.unit_volume
                     if weight is None or weight <= 0:
-                        raise serializers.ValidationError({"allocations": "لا يمكن التوزيع بالقيمة أو الكمية على بند استلام بوزن توزيع صفري."})
+                        basis_label = {
+                            LandedCostAllocation.Basis.VALUE: "قيمة الاستلام",
+                            LandedCostAllocation.Basis.QUANTITY: "كمية الاستلام",
+                            LandedCostAllocation.Basis.WEIGHT: "وزن الصنف",
+                            LandedCostAllocation.Basis.VOLUME: "حجم الصنف",
+                        }[basis]
+                        raise serializers.ValidationError({
+                            "allocations": f"لا يمكن التوزيع على {receipt.product.code}؛ أدخل بيانات {basis_label} موجبة في بطاقة الصنف."
+                        })
                     weights.append(Decimal(weight))
                 weight_total = sum(weights, Decimal("0"))
                 shares = [(amount * weight / weight_total).quantize(quantum) for weight in weights]
