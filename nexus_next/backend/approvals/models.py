@@ -69,7 +69,7 @@ class DiscountApprovalPolicy(models.Model):
 
 
 class SalesInvoiceApproval(models.Model):
-    """يحفظ طلب اعتماد خصم أو فاتورة بيع مع لقطة بياناتها وقت الطلب."""
+    """يحفظ طلب اعتماد خصم أو قيمة أو حد ائتماني لفاتورة بيع مع لقطة وقت الطلب."""
     class Status(models.TextChoices):
         PENDING = "pending", "بانتظار الموافقة"
         APPROVED = "approved", "تمت الموافقة"
@@ -101,8 +101,8 @@ class SalesInvoiceApproval(models.Model):
         indexes = [
             models.Index(fields=("company", "status", "requested_at"), name="approval_co_status_date_idx"),
         ]
-        verbose_name = "طلب موافقة خصم"
-        verbose_name_plural = "طلبات موافقات الخصم"
+        verbose_name = "طلب موافقة فاتورة مبيعات"
+        verbose_name_plural = "طلبات موافقات فواتير المبيعات"
 
     def clean(self):
         super().clean()
