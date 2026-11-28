@@ -21,7 +21,13 @@ def _previous_layer_original_cost(layer):
     previous = InventoryValuationLayerAdjustment.objects.filter(
         layer=layer, line__assessment__status=InventoryValuationAssessment.Status.POSTED,
     ).order_by("-line__assessment__assessment_date", "-pk").first()
-    return previous.original_unit_cost if previous else layer.unit_cost
+    if previous:
+        return previous.original_unit_cost
+    # A transfer or supplier-return reversal creates a child layer. Follow its
+    # lineage so an earlier NRV write-down does not become the new historical cost.
+    if layer.parent_layer_id:
+        return _previous_layer_original_cost(layer.parent_layer)
+    return layer.unit_cost
 
 
 @transaction.atomic
