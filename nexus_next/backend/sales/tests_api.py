@@ -543,6 +543,72 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(report.data["sales"]["by_code"][0]["tax_code"], "VAT-STD-14")
         self.assertEqual(report.data["sales"]["by_category"][0]["category"], "standard")
 
+    def test_sales_vat_return_separates_standard_zero_exempt_and_out_of_scope_categories(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-VAT-CATEGORIES",
+            name_ar="خدمة لاختبار التصنيفات الضريبية",
+            product_type=Product.ProductType.SERVICE, stock_class=None,
+        )
+        codes = []
+        for code, category, rate in (
+            ("VAT-CAT-STD", TaxCode.Category.STANDARD, "14"),
+            ("VAT-CAT-ZERO", TaxCode.Category.ZERO_RATED, "0"),
+            ("VAT-CAT-EXEMPT", TaxCode.Category.EXEMPT, "0"),
+            ("VAT-CAT-OOS", TaxCode.Category.OUT_OF_SCOPE, "0"),
+        ):
+            codes.append(TaxCode.objects.create(
+                company=self.company, country="EG", code=code, name_ar=code,
+                category=category, rate=Decimal(rate),
+                effective_from=date(2026, 1, 1),
+            ))
+
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-VAT-CATEGORIES",
+            "invoice_date": "2026-03-10",
+            "lines": [
+                {"product": service.pk, "quantity": "1", "unit_price": "100", "tax_code": code.pk}
+                for code in codes
+            ],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["net_total"], "400.0000")
+        self.assertEqual(invoice.data["tax_total"], "14.0000")
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["sales"]["taxable_base"], "400.0000")
+        self.assertEqual(report.data["output_tax"], "14.0000")
+        by_category = {row["category"]: row for row in report.data["sales"]["by_category"]}
+        self.assertEqual(set(by_category), {"standard", "zero_rated", "exempt", "out_of_scope"})
+        self.assertEqual(by_category["standard"]["taxable_base"], "100.0000")
+        self.assertEqual(by_category["standard"]["tax_amount"], "14.0000")
+        for category in ("zero_rated", "exempt", "out_of_scope"):
+            self.assertEqual(by_category[category]["taxable_base"], "100.0000")
+            self.assertEqual(by_category[category]["tax_amount"], "0.0000")
+
+        reverse_charge = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-CAT-RC", name_ar="احتساب عكسي",
+            category=TaxCode.Category.REVERSE_CHARGE, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1),
+        )
+        rejected = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-VAT-REVERSE-CHARGE",
+            "invoice_date": "2026-03-10",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "100",
+                       "tax_code": reverse_charge.pk}],
+        }, format="json")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+
     def test_vat_return_preserves_sales_return_and_reversal_in_their_posting_periods(self):
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="VAT-REV-14", name_ar="ضريبة قياسية",
