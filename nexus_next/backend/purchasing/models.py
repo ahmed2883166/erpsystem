@@ -1226,3 +1226,11 @@ class BranchPurchasePolicyAudit(models.Model):
     class Meta:
         ordering = ("-changed_at", "-pk")
         indexes = [models.Index(fields=("policy", "-changed_at"), name="branch_buy_audit_idx")]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سجل تدقيق سياسة الشراء غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف سجل تدقيق سياسة الشراء.")
