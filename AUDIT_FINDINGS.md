@@ -15,12 +15,14 @@ Base commit: `9682a4b98892dfdfe6d32301b2a165e4d0f8860f`
 Status: verified by source inspection and existing test coverage; broader sales and multi-branch end-to-end scenarios remain in the audit scope.
 
 
-### Treasury account branch-scope enforcement
-- Confirmed: `TreasuryAccountViewSet.get_queryset` hides unassigned/company-wide treasury accounts from users who cannot access every active branch, but the create path previously allowed those users to create an account with `branch=null`.
-- Confirmed: the generic update path previously allowed an accessible branch account with no financial history to be changed to `branch=null` without checking company-wide branch access.
-- Fix on this audit branch: require company-wide branch access for creating or changing an account to an unassigned/company-wide scope; re-check company and write role on update; prohibit moving an existing treasury account to another company.
-- Regression tests added: branch-limited users cannot create a company-wide treasury account and cannot change a branch treasury account to company-wide scope.
-- Validation: CI, PostgreSQL backend suite, CodeQL and concurrent-user workflow are running on the fix commit; result pending.
+### Treasury branch and linked-account authorization
+- Confirmed: a branch-limited accountant could create a company-wide treasury account with `branch=null`, or move an existing branch account into that scope, despite company-wide accounts being hidden from that user in list queries.
+- Confirmed: cheque updates checked the cheque's old branch but did not authorize the new branch/company; linked treasury accounts could also be referenced without verifying their branch scope.
+- Confirmed: treasury transactions and petty-cash funds validated that linked accounts belonged to the company but did not consistently verify that the user could access those accounts' branches. Petty-cash fund updates also did not re-authorize the target branch.
+- Confirmed: a branch-limited user could change a cash commitment's branch to `null`, moving it into company-wide scope.
+- Fix on this audit branch: add shared linked-treasury-account branch authorization; enforce company immutability and target-branch access for treasury account, cheque and petty-cash updates; require company-wide access for null-branch accounts/commitments.
+- Regression tests added for cross-branch account use, global account use, cross-company cheque movement, unauthorized cheque/fund branch changes, company-wide account creation/update, and commitment scope changes.
+- Validation: CI, PostgreSQL backend suite, CodeQL and concurrent-user workflow are running on the latest audit commit; result pending.
 
 ## Open review areas
 - Purchase -> partial receipt -> invoice -> payment -> GL and GRNI reconciliation.
