@@ -582,6 +582,23 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         self.assertEqual(final_source_stock.inventory_value, Decimal("0.0000"))
         self.assertEqual(final_destination_stock.quantity, Decimal("1.0000"))
         self.assertEqual(final_destination_stock.inventory_value, Decimal("100.0000"))
+
+        inventory_reconciliation = self.client.get(
+            f"/api/inventory/balances/reconciliation/?company={self.company.pk}",
+        )
+        self.assertEqual(
+            inventory_reconciliation.status_code, 200, inventory_reconciliation.data,
+        )
+        self.assertEqual(inventory_reconciliation.data["stock_value"], "100.0000")
+        self.assertEqual(inventory_reconciliation.data["gl_balance"], "100.0000")
+        self.assertEqual(inventory_reconciliation.data["difference"], "0.0000")
+        self.assertTrue(inventory_reconciliation.data["is_reconciled"])
+
+        valuation_integrity = self.client.get(
+            f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}",
+        )
+        self.assertEqual(valuation_integrity.status_code, 200, valuation_integrity.data)
+        self.assertEqual(valuation_integrity.data["fifo_mismatch_count"], 0)
         self.assertEqual(
             final_source_stock.inventory_value + final_destination_stock.inventory_value,
             Decimal("100.0000"),
