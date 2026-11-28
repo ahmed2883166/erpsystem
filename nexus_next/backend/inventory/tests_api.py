@@ -1342,4 +1342,4 @@ class InventoryApiTests(APITestCase):
             else sender_receipt_history.data
         )
         self.assertEqual(len(receipt_rows), 1)
-        self.assertEqual(receipt_rows[0]["receipt_number"], "TR-1-R1")
+        self.assertEqual(receipt_rows[0]["receipt_number"], f"TR-{transfer_id}-R1")
