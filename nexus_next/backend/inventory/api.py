@@ -434,8 +434,10 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         ).first()
         if product is None:
             raise NotFound("الصنف غير موجود أو غير متاح.")
+        # Inactive warehouses remain readable for historical stock-card review.
+        # The write path still rejects them in _check_warehouse().
         warehouse_query = Warehouse.objects.filter(
-            pk=warehouse_id, company_id=product.company_id, is_active=True,
+            pk=warehouse_id, company_id=product.company_id,
         )
         if not request.user.is_superuser or is_platform_owner(request.user):
             branches = accessible_branches(request.user)
