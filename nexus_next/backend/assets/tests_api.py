@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from assets.models import AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
 from assets.services import post_asset_supplier_payment
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction
