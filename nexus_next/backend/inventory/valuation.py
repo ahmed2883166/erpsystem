@@ -1,6 +1,7 @@
 """IAS 2 lower-of-cost-and-NRV inventory assessment posting and reversal."""
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -153,8 +154,12 @@ def post_inventory_valuation_assessment(assessment_id, user):
     branch = resolve_warehouse_branch(assessment.company, assessment.warehouse)
     if not branch or not branch.is_active:
         raise ValidationError("لا يمكن ترحيل تقييم مخزون دون فرع نشط للمخزن.")
-    inventory_account = get_account_for_role(assessment.company, AccountRole.Role.INVENTORY)
-    loss_account = get_account_for_role(assessment.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS)
+    try:
+        inventory_account = get_account_for_role(assessment.company, AccountRole.Role.INVENTORY)
+        loss_account = get_account_for_role(assessment.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
     entry = JournalEntry.objects.create(
         company=assessment.company, branch=branch, fiscal_year=year,
         entry_number=f"INV-NRV-{assessment.pk}", entry_date=assessment.assessment_date,
@@ -173,7 +178,11 @@ def post_inventory_valuation_assessment(assessment_id, user):
             JournalLine(entry=entry, account=loss_account, description="عكس خسارة تخفيض المخزون", debit=0, credit=recovery),
         ]
     JournalLine.objects.bulk_create(rows)
-    posted = post_journal(entry.pk, actor=user)
+    try:
+        posted = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
     assessment.quantity = quantity_total
     assessment.carrying_value_before = before_total
     assessment.carrying_value_after = after_total
@@ -224,9 +233,13 @@ def reverse_inventory_valuation_assessment(assessment_id, user, entry_date):
         line.balance.inventory_value = line.previous_inventory_value
         line.balance.average_cost = line.previous_average_cost
         line.balance.save(update_fields=("inventory_value", "average_cost", "updated_at"))
-    reversal = reverse_operational_journal(
-        assessment.journal_entry_id, user, entry_date, JournalEntry.Source.INVENTORY,
-    )
+    try:
+        reversal = reverse_operational_journal(
+            assessment.journal_entry_id, user, entry_date, JournalEntry.Source.INVENTORY,
+        )
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
     InventoryValuationAssessment.objects.filter(pk=assessment.pk).update(
         reversal_journal_entry=reversal,
         status=InventoryValuationAssessment.Status.REVERSED,
