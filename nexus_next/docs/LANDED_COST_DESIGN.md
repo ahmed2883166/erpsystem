@@ -20,7 +20,7 @@ This change adds landed-cost capitalization for freight, customs, insurance, cle
 3. Internal transfers are not treated as final consumption. The child layer remains part of the original receipt lineage and receives the revised unit cost.
 4. The sum of remaining quantity and final-consumed quantity must equal the receipt quantity. Missing or inconsistent lineage blocks posting.
 5. Amounts are rounded to the company's base-currency precision; any residual is assigned deterministically to the largest unrounded bucket. The allocation must reconcile exactly to its source amount.
-6. Current entry uses manual amounts per receipt line. Automatic allocation by value, quantity, weight, or volume is intentionally not enabled until the allocation rules and reliable master-data inputs are implemented and tested.
+6. Allocation supports automatic distribution by receipt-line value or quantity, with deterministic rounding so the allocated rows reconcile exactly to the entered total. Manual allocation remains available. Weight- and volume-based allocation are represented as supported basis choices in the data model but must not be presented as operational until product master-data fields, validation, and acceptance tests are completed.
 
 ## Cost and accounting effects
 
