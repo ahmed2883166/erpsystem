@@ -92,8 +92,8 @@ def _queryset_for(resource, company_id, user):
                 scope |= Q(warehouse__branch__isnull=True)
             qs = qs.filter(scope)
         else:
-            source_scope = Q(source_warehouse__branch__in=branches)
-            destination_scope = Q(destination_warehouse__branch__in=branches)
+            source_scope = Q(source_warehouse__branch__in=branches) | Q(source_warehouse__isnull=True)
+            destination_scope = Q(destination_warehouse__branch__in=branches) | Q(destination_warehouse__isnull=True)
             if company_wide:
                 source_scope |= Q(source_warehouse__branch__isnull=True)
                 destination_scope |= Q(destination_warehouse__branch__isnull=True)
