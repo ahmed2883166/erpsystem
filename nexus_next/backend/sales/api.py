@@ -737,7 +737,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id=company_id, customer_id=customer_id,
             branch__in=accessible_branches(request.user),
             status__in=(CustomerRefund.Status.POSTED, CustomerRefund.Status.REVERSED),
-        ).select_related("reversal_journal_entry")
+        ).select_related("source_receipt_batch", "reversal_journal_entry")
         if branch_id:
             customer_refunds = customer_refunds.filter(branch_id=branch_id)
         for refund in customer_refunds:
