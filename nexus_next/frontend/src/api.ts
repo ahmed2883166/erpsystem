@@ -4,6 +4,7 @@
  */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
 export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; activities?: ("commercial" | "service" | "medical" | "restaurants" | "industrial")[]; activity_assignments?: { id: number; activity: "commercial" | "service" | "medical" | "restaurants" | "industrial"; is_active: boolean }[]; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
+export type BranchPurchasePolicy = { id:number; branch:number; branch_id:number; branch_name:string; purchase_enabled:boolean; restrict_suppliers:boolean; allowed_supplier_ids:number[]; updated_at:string };
 export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; display_name?: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
@@ -274,6 +275,9 @@ export type SupplierAging = {
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  branchPurchasePolicies: (companyId:number) => request<BranchPurchasePolicy[]>(`/api/purchasing/branch-purchase-policies/?branch__company=${companyId}`),
+  createBranchPurchasePolicy: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<BranchPurchasePolicy>("/api/purchasing/branch-purchase-policies/", {method:"POST",body:JSON.stringify(payload)}); },
+  updateBranchPurchasePolicy: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<BranchPurchasePolicy>(`/api/purchasing/branch-purchase-policies/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
   createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
   updateRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
