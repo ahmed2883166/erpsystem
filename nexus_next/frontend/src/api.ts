@@ -928,6 +928,10 @@ export type StockMovement = {
   destination_warehouse: number | null; destination_warehouse_name: string | null;
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
+export type InventoryReorderSuggestions = {
+  company:number; as_of:string; count:number; truncated:boolean; basis:string;
+  rows:{product:number;product_code:string;product_name:string;warehouse:number;warehouse_name:string;on_hand:string;reserved:string;available:string;on_order:string;projected_available:string;reorder_point:string;suggested_purchase_quantity:string;last_movement:string|null;age_days:number|null;stock_status:"sold"|"reorder"|"stagnant"|"available"}[];
+};
 export type InventoryStockAging = {
   company: number; branch: number | null; as_of: string;
   summary: Record<"active" | "slow" | "very_slow" | "stagnant" | "unknown", number>;
@@ -983,6 +987,10 @@ export type StockTransferReceipt = {
 };
 // واجهات حركات المخزون وتقاريره: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const stockApi = {
+  // اقتراح كميات الشراء بعد خصم أوامر البيع وإضافة أوامر الشراء المفتوحة.
+  reorderSuggestions: (companyId:number) => request<InventoryReorderSuggestions>(`/api/inventory/balances/reorder-suggestions/?company=${companyId}`),
+  // جلب الحركات غير المرحلة لمتابعتها.
+  pendingMovements: (companyId:number) => request<{count:number;truncated:boolean;results:StockMovement[]}>(`/api/inventory/movements/pending/?company=${companyId}`),
   // جلب حركات المخزون مرتبة من الأحدث.
   movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/recent/?company=${companyId}&limit=100`),
   // تحليل أعمار الحركة من قاعدة البيانات دون تنزيل سجل الحركات الكامل.
