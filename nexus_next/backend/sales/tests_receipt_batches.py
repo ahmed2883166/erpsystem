@@ -190,6 +190,62 @@ class CustomerReceiptBatchTests(APITestCase):
             credit = sum((line.credit for line in lines), Decimal("0"))
             self.assertEqual(debit, credit, entry.entry_number)
 
+    def test_receipt_batch_reversal_rejects_intermediate_future_overdraft(self):
+        from accounting.models import ChartOfAccount
+        from companies.models import FiscalYear
+        from treasury.models import TreasuryAccount
+
+        bank_gl = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-BATCH-FUTURE-REV",
+            name_ar="بنك اختبار عكس سند قبض", opening_balance=Decimal("0"),
+        )
+        created = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "receipt_number": "BATCH-FUTURE-REV-001",
+            "receipt_date": "2026-03-11", "method": "bank",
+            "payment_account": bank_gl.pk, "amount": "75", "allocations": [],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        for number, movement_date, debit, credit, nature in (
+            ("BATCH-FUTURE-OUT", date(2026, 3, 13), "0", "80", ChartOfAccount.Nature.EXPENSE),
+            ("BATCH-FUTURE-IN", date(2026, 3, 14), "100", "0", ChartOfAccount.Nature.REVENUE),
+        ):
+            offset = ChartOfAccount.objects.create(
+                company=self.company, code=f"REV-{number}",
+                name_ar="مقابل حركة اختبار", nature=nature,
+            )
+            entry = JournalEntry.objects.create(
+                company=self.company, branch=self.branch,
+                fiscal_year=FiscalYear.objects.get(
+                    company=self.company, start_date__lte=movement_date, end_date__gte=movement_date,
+                ),
+                entry_number=number, entry_date=movement_date,
+                description="حركة مستقبلية لاختبار عكس سند القبض",
+            )
+            JournalLine.objects.create(
+                entry=entry, account=bank_gl, debit=Decimal(debit), credit=Decimal(credit),
+            )
+            JournalLine.objects.create(
+                entry=entry, account=offset, debit=Decimal(credit), credit=Decimal(debit),
+            )
+            post_journal(entry.pk, actor=self.user)
+
+        journal_count = JournalEntry.objects.count()
+        rejected = self.client.post(
+            f"/api/sales-documents/receipt-batches/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("حركة لاحقة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_reversing_bank_receipt_batch_also_reverses_its_treasury_mirror(self):
         from accounting.models import ChartOfAccount
         from treasury.models import TreasuryAccount, TreasuryTransaction

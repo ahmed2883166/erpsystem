@@ -2043,6 +2043,96 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
 
+    def test_supplier_refund_reversal_rejects_intermediate_future_treasury_overdraft(self):
+        from accounting.services import post_journal
+
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-REFUND-FUTURE-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        bank = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="بنك اختبار عكس الاسترداد", nature="asset",
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-REFUND-FUTURE",
+            name_ar="بنك اختبار عكس الاسترداد", currency_code="EGP",
+            opening_balance=Decimal("228"),
+        )
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-REFUND-FUTURE",
+            "payment_date": "2026-03-11", "method": "bank",
+            "payment_account": bank.pk, "amount": "228",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "return_number": "RET-REFUND-FUTURE",
+            "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "return_document": posted_return.data["id"], "refund_number": "REF-FUTURE-001",
+            "refund_date": "2026-03-13", "method": "bank", "payment_account": bank.pk,
+            "amount": "50",
+        }, format="json")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        posted_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+
+        for number, movement_date, debit, credit, offset_nature in (
+            ("REFUND-REV-FUTURE-OUT", date(2026, 3, 16), "0", "60", ChartOfAccount.Nature.EXPENSE),
+            ("REFUND-REV-FUTURE-IN", date(2026, 3, 17), "100", "0", ChartOfAccount.Nature.REVENUE),
+        ):
+            offset = ChartOfAccount.objects.create(
+                company=self.company, code=f"R-{number}", name_ar="مقابل حركة اختبار",
+                nature=offset_nature,
+            )
+            entry = JournalEntry.objects.create(
+                company=self.company, branch=self.branch, fiscal_year=self.year,
+                entry_number=number, entry_date=movement_date,
+                description="حركة مستقبلية لاختبار عكس استرداد المورد",
+            )
+            JournalLine.objects.create(
+                entry=entry, account=bank, debit=Decimal(debit), credit=Decimal(credit),
+            )
+            JournalLine.objects.create(
+                entry=entry, account=offset, debit=Decimal(credit), credit=Decimal(debit),
+            )
+            post_journal(entry.pk, actor=self.user)
+
+        journal_count = JournalEntry.objects.count()
+        rejected = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("حركة لاحقة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_supplier_return_cannot_consume_another_receipts_cost_layers(self):
         first_receipt_id, first_receipt_line_id = self._create_and_post_receipt()
         second_receipt = self.client.post("/api/purchasing/receipts/", {

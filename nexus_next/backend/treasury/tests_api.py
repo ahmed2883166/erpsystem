@@ -501,6 +501,73 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(deleted.status_code, 400, deleted.data)
         self.assertTrue(TreasuryTransaction.objects.filter(pk=created.data["id"]).exists())
 
+    def _post_cash_ledger_movement(self, number, movement_date, debit, credit):
+        debit = Decimal(debit)
+        credit = Decimal(credit)
+        offset = ChartOfAccount.objects.create(
+            company=self.company, code=f"TEST-{number}",
+            name_ar="مقابل حركة خزينة اختبار",
+            nature=(
+                ChartOfAccount.Nature.EXPENSE
+                if credit else ChartOfAccount.Nature.REVENUE
+            ),
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number=number, entry_date=movement_date,
+            description="حركة اختبار مؤرخة على حساب الخزينة",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.cash_gl, debit=debit, credit=credit,
+        )
+        JournalLine.objects.create(
+            entry=entry, account=offset, debit=credit, credit=debit,
+        )
+        return post_journal(entry.pk, actor=self.user)
+
+    def test_backdated_treasury_payment_cannot_use_a_future_deposit(self):
+        self._post_cash_ledger_movement(
+            "FUTURE-DEPOSIT", date(2026, 3, 20), "500", "0",
+        )
+        payment = self._create(
+            kind="payment", document_number="BACKDATED-NO-FUTURE-FUND",
+            transaction_date="2026-03-15", amount="100",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        journal_count = JournalEntry.objects.count()
+
+        rejected = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json",
+        )
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("تاريخ الحركة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
+    def test_backdated_treasury_payment_rejects_intermediate_future_overdraft(self):
+        self.cash.opening_balance = Decimal("200")
+        self.cash.save(update_fields=("opening_balance",))
+        self._post_cash_ledger_movement(
+            "FUTURE-WITHDRAWAL", date(2026, 3, 20), "0", "180",
+        )
+        self._post_cash_ledger_movement(
+            "FUTURE-DEPOSIT-AFTER-OUT", date(2026, 3, 25), "100", "0",
+        )
+        payment = self._create(
+            kind="payment", document_number="BACKDATED-FUTURE-OVERDRAFT",
+            transaction_date="2026-03-15", amount="100",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        journal_count = JournalEntry.objects.count()
+
+        rejected = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json",
+        )
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("حركة لاحقة", str(rejected.data))
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
     def test_payment_requires_counter_account_and_positive_amount(self):
         invalid = self._create(kind="payment", amount="0")
         self.assertEqual(invalid.status_code, 400)
