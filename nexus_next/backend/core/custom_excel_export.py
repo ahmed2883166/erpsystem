@@ -118,6 +118,8 @@ FIELD_LABELS = {
 
 def _field_label(model, name):
     field = model._meta.get_field(name)
+    if model is TreasuryTransaction and name == "kind":
+        return "نوع الحركة"
     return FIELD_LABELS.get(name, str(field.verbose_name))
 
 
