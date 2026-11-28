@@ -569,6 +569,48 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
         elif not invoice.branch_id or not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة الخدمة.")
+        from approvals.models import SalesInvoiceApproval
+        from approvals.snapshots import invoice_discount_snapshot
+        from sales.services import customer_credit_exposure
+        customer = Customer.objects.select_for_update().get(pk=invoice.customer_id)
+        credit_exposure = customer_credit_exposure(customer)
+        if customer.credit_limit > 0 and credit_exposure + invoice.grand_total > customer.credit_limit:
+            latest = invoice.approval_requests.order_by("-requested_at", "-pk").first()
+            current_max_discount = max(invoice.lines.values_list("discount_percent", flat=True), default=Decimal("0"))
+            credit_snapshot_matches = bool(
+                latest
+                and latest.requested_credit_limit == customer.credit_limit
+                and latest.requested_credit_exposure == credit_exposure
+                and latest.requested_credit_amount == invoice.grand_total
+                and latest.requested_discount_total == invoice.discount_total
+                and latest.requested_max_discount_percent == current_max_discount
+                and latest.requested_invoice_limit == invoice.invoice_approval_limit
+                and latest.requested_lines_snapshot == invoice_discount_snapshot(invoice)
+            )
+            if not credit_snapshot_matches:
+                for old_request in invoice.approval_requests.filter(status=SalesInvoiceApproval.Status.PENDING):
+                    old_request.status = SalesInvoiceApproval.Status.SUPERSEDED
+                    old_request.decision_note = "تغير موقف العميل الائتماني؛ أُنشئ طلب اعتماد أحدث."
+                    old_request.save()
+                latest = SalesInvoiceApproval.objects.create(
+                    company=invoice.company, invoice=invoice, requested_by=request.user,
+                    requested_limit=invoice.discount_approval_limit,
+                    requested_invoice_limit=invoice.invoice_approval_limit,
+                    requested_discount_total=invoice.discount_total,
+                    requested_max_discount_percent=current_max_discount,
+                    requested_credit_limit=customer.credit_limit,
+                    requested_credit_exposure=credit_exposure,
+                    requested_credit_amount=invoice.grand_total,
+                    requested_lines_snapshot=invoice_discount_snapshot(invoice),
+                )
+            if latest.status != SalesInvoiceApproval.Status.APPROVED:
+                return Response({
+                    "detail": "تجاوزت الفاتورة حد ائتمان العميل. تم تسجيل طلب اعتماد مدير الشركة، ولا يمكن الترحيل قبل الموافقة.",
+                    "approval_request": latest.pk,
+                    "credit_limit": str(customer.credit_limit),
+                    "current_exposure": str(credit_exposure),
+                    "invoice_amount": str(invoice.grand_total),
+                }, status=status.HTTP_400_BAD_REQUEST)
         invoice.print_template_snapshot = _document_template_snapshot(invoice.company, SalesDocumentTemplate.DocumentType.INVOICE)
         invoice.save(update_fields=("print_template_snapshot",))
         invoice = post_sales_invoice(invoice.pk, request.user)
