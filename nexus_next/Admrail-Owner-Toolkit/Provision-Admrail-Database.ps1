@@ -87,6 +87,10 @@ try {
         $roleExists = Invoke-Psql $psql $hostName $port $adminUser "postgres" ("SELECT 1 FROM pg_roles WHERE rolname='" + $appUser.Replace("'","''") + "';")
         if ($dbExists) { throw "قاعدة البيانات [$dbName] موجودة بالفعل. لم يتم لمسها." }
         if ($roleExists) { throw "مستخدم PostgreSQL [$appUser] موجود بالفعل. لم يتم تعديله." }
+        Write-Host "سيتم إنشاء قاعدة جديدة [$dbName] ومستخدم تطبيق محدود [$appUser]. لن يتم تعديل قواعد أو مستخدمين موجودين." -ForegroundColor Yellow
+        if ((Read-Host "للموافقة على إنشاء قاعدة البيانات والمستخدم اكتب CREATE") -cne "CREATE") {
+            throw "تم الإلغاء قبل إنشاء أي مستخدم أو قاعدة بيانات."
+        }
 
         $appPassword = New-RandomSecret 48
         $escapedPassword = $appPassword.Replace("'","''")
