@@ -45,6 +45,33 @@ class FixedAssetWorkflowTests(APITestCase):
             "disposal_gain_loss_account": self.gain_loss_gl.pk, "disposal_loss_account": self.expense_gl.pk, "fiscal_year": self.year.pk,
         }
 
+    def test_branch_limited_user_cannot_move_unposted_asset_to_another_branch(self):
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع غير متاح",
+        )
+        limited = get_user_model().objects.create_user(
+            username="asset-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.patch(
+            f"/api/assets/fixed-assets/{asset_id}/",
+            {"branch": other_branch.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        asset = FixedAsset.objects.get(pk=asset_id)
+        self.assertEqual(asset.branch_id, self.branch.pk)
+        self.assertIsNone(asset.acquisition_journal_id)
+
     def test_acquisition_posts_asset_cost_and_monthly_depreciation(self):
         created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
         self.assertEqual(created.status_code, 201, created.data)

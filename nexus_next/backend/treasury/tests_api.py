@@ -15,7 +15,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashCount, PettyCashCustodianHandover, PettyCashTransfer
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashCount, PettyCashCustodianHandover, PettyCashTransfer
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -32,6 +32,75 @@ class TreasuryWorkflowTests(APITestCase):
         self.revenue_gl = ChartOfAccount.objects.create(company=self.company, code="4100", name_ar="إيرادات أخرى", nature=ChartOfAccount.Nature.REVENUE)
         self.cash = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.cash_gl, kind="cash", code="CASH-1", name_ar="الخزينة الرئيسية")
         self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.bank_gl, kind="bank", code="BANK-1", name_ar="البنك الرئيسي", bank_name="بنك تجريبي")
+
+    def _branch_limited_treasury_user(self):
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع ثانٍ",
+        )
+        limited = get_user_model().objects.create_user(
+            username="treasury-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.assertNotIn(other_branch.pk, membership.branches.values_list("id", flat=True))
+        self.client.force_authenticate(limited)
+        return limited
+
+    def test_branch_limited_user_cannot_create_company_wide_treasury_account(self):
+        self._branch_limited_treasury_user()
+        global_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1199", name_ar="خزينة عامة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": None, "account": global_gl.pk,
+            "kind": "cash", "code": "CASH-GLOBAL", "name_ar": "خزينة عامة",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(TreasuryAccount.objects.filter(code="CASH-GLOBAL").exists())
+
+    def test_branch_limited_user_cannot_move_branch_treasury_account_to_company_wide_scope(self):
+        self._branch_limited_treasury_user()
+        response = self.client.patch(
+            f"/api/treasury/accounts/{self.cash.pk}/",
+            {"branch": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.cash.refresh_from_db()
+        self.assertEqual(self.cash.branch_id, self.branch.pk)
+
+    def test_branch_limited_user_cannot_use_another_branches_treasury_account(self):
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع آخر",
+        )
+        other_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="بنك الفرع الآخر",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_gl,
+            kind="bank", code="BANK-OTHER-BRANCH", name_ar="بنك فرع آخر",
+        )
+        limited = get_user_model().objects.create_user(
+            username="treasury-source-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": other_bank.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "TR-CROSS-BRANCH",
+            "transaction_date": "2026-03-15", "amount": "25.0000",
+            "description": "اختبار نطاق الفرع",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(TreasuryTransaction.objects.filter(document_number="TR-CROSS-BRANCH").exists())
 
     def _create(self, kind="receipt", **extra):
         payload = {
@@ -1378,6 +1447,102 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.counter_gl = ChartOfAccount.objects.create(company=self.company, code="4100", name_ar="حساب مقابل", nature=ChartOfAccount.Nature.REVENUE)
         self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.bank_gl, kind="bank", code="BANK-CHQ", name_ar="البنك الرئيسي")
 
+    def test_branch_limited_user_cannot_move_cheque_to_an_inaccessible_branch(self):
+        created = self._create_incoming("MOVE-BRANCH-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع غير متاح",
+        )
+        other_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="بنك الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_gl,
+            kind="bank", code="BANK-CHQ-2", name_ar="بنك الفرع الثاني",
+        )
+        limited = get_user_model().objects.create_user(
+            username="cheque-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        response = self.client.patch(
+            f"/api/treasury/cheques/{created.data['id']}/",
+            {"branch": other_branch.pk, "bank_account": other_bank.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        cheque = TreasuryCheque.objects.get(pk=created.data["id"])
+        self.assertEqual(cheque.branch_id, self.branch.pk)
+        self.assertEqual(cheque.bank_account_id, self.bank.pk)
+
+    def test_cheque_cannot_be_moved_to_another_company(self):
+        created = self._create_incoming("MOVE-COMPANY-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        other_company = Company.objects.create(
+            code="CHQ2", name_ar="شركة أخرى", country="EG",
+            activity="commercial", base_currency=self.company.base_currency,
+        )
+        other_branch = Branch.objects.create(
+            company=other_company, code="MAIN", name_ar="الرئيسي",
+        )
+        other_year = FiscalYear.objects.create(
+            company=other_company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        other_gl = ChartOfAccount.objects.create(
+            company=other_company, code="1110", name_ar="بنك آخر",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_bank = TreasuryAccount.objects.create(
+            company=other_company, branch=other_branch, account=other_gl,
+            kind="bank", code="BANK-OTHER", name_ar="بنك آخر",
+        )
+        response = self.client.patch(
+            f"/api/treasury/cheques/{created.data['id']}/",
+            {
+                "company": other_company.pk, "branch": other_branch.pk,
+                "fiscal_year": other_year.pk, "bank_account": other_bank.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        cheque = TreasuryCheque.objects.get(pk=created.data["id"])
+        self.assertEqual(cheque.company_id, self.company.pk)
+
+    def test_branch_limited_user_cannot_create_cheque_using_company_wide_bank_account(self):
+        global_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1113", name_ar="بنك عام",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        global_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=global_gl,
+            kind="bank", code="BANK-GLOBAL-CHQ", name_ar="بنك عام",
+        )
+        Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع آخر",
+        )
+        limited = get_user_model().objects.create_user(
+            username="cheque-global-bank-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.post("/api/treasury/cheques/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "bank_account": global_bank.pk, "direction": "incoming", "cheque_number": "GLOBAL-001",
+            "counterparty": "عميل", "amount": "100",
+            "issue_date": "2026-03-01", "due_date": "2026-03-15",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(TreasuryCheque.objects.filter(cheque_number="GLOBAL-001").exists())
+
     def _create_incoming(self, number="IN-001"):
         return self.client.post("/api/treasury/cheques/", {
             "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
@@ -1792,6 +1957,87 @@ class PettyCashWorkflowTests(APITestCase):
             JournalLine(entry=opening, account=self.equity_gl, debit=0, credit=Decimal("1000")),
         ])
         post_journal(opening.pk, actor=self.user)
+
+    def test_branch_limited_user_cannot_move_petty_cash_fund_to_an_inaccessible_branch(self):
+        fund_id = self._create_fund()
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع غير متاح",
+        )
+        other_cash_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1102", name_ar="خزينة الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_petty_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="عهدة الفرع الثاني",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        other_cash = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_cash_gl,
+            kind="cash", code="CASH-PC-2", name_ar="خزينة الفرع الثاني",
+        )
+        other_petty = TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_petty_gl,
+            kind="cash", code="PETTY-PC-2", name_ar="عهدة الفرع الثاني",
+        )
+        limited = get_user_model().objects.create_user(
+            username="petty-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        response = self.client.patch(
+            f"/api/treasury/petty-cash-funds/{fund_id}/",
+            {
+                "branch": other_branch.pk, "funding_account": other_cash.pk,
+                "petty_cash_account": other_petty.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        fund = PettyCashFund.objects.get(pk=fund_id)
+        self.assertEqual(fund.branch_id, self.branch.pk)
+        self.assertEqual(fund.funding_account_id, self.cash.pk)
+        self.assertEqual(fund.petty_cash_account_id, self.petty_account.pk)
+
+    def test_branch_limited_user_cannot_create_petty_cash_fund_with_company_wide_accounts(self):
+        Branch.objects.create(
+            company=self.company, code="BR2", name_ar="فرع آخر",
+        )
+        global_cash_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1102", name_ar="خزينة عامة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        global_petty_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="عهدة عامة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        global_cash = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=global_cash_gl,
+            kind="cash", code="CASH-PC-GLOBAL", name_ar="خزينة عامة",
+        )
+        global_petty = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=global_petty_gl,
+            kind="cash", code="PETTY-PC-GLOBAL", name_ar="عهدة عامة",
+        )
+        limited = get_user_model().objects.create_user(
+            username="petty-global-account-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.post("/api/treasury/petty-cash-funds/", {
+            "company": self.company.pk, "branch": self.branch.pk, "code": "PC-GLOBAL",
+            "name": "عهدة بحسابات عامة", "custodian": limited.pk,
+            "funding_account": global_cash.pk, "petty_cash_account": global_petty.pk,
+            "authorized_amount": "100",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(PettyCashFund.objects.filter(code="PC-GLOBAL").exists())
 
     def _create_fund(self):
         response = self.client.post("/api/treasury/petty-cash-funds/", {
