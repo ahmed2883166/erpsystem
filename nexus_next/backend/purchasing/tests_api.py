@@ -4035,7 +4035,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             "document_date": "2026-03-14",
             "allocations": [{
                 "source_invoice_line": source_line.pk,
-                "receipt_line": receipt_line_id,
+                "receipt_lines": [receipt_line_id],
                 "basis": "weight",
                 "amount": "20.0000",
             }],
