@@ -118,8 +118,8 @@ export default function CustomExcelExportButton({ resource, companyId, branchId 
       تصدير Excel مخصص
     </button>
     {open && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby={`custom-export-title-${resource}`}>
-        <div className="section-heading">
+      <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby={`custom-export-title-${resource}`}>
+        <div className="modal-heading">
           <div><h2 id={`custom-export-title-${resource}`}>تصدير ${resourceNames[resource]}</h2><p>اختر الأعمدة، رتّبها، ثم راجع عينة البيانات قبل تنزيل الملف.</p></div>
           <button type="button" className="subtle-button" onClick={() => setOpen(false)}>إغلاق</button>
         </div>
