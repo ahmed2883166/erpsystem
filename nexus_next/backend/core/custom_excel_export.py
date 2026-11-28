@@ -71,9 +71,40 @@ EXPORTS = {
 }
 
 
+FIELD_LABELS = {
+    "code": "الكود", "barcode": "الباركود", "name_ar": "الاسم بالعربية",
+    "name_en": "الاسم بالإنجليزية", "product_type": "نوع الصنف",
+    "stock_class": "تصنيف المخزون", "category": "المجموعة الصنفية",
+    "unit": "وحدة القياس", "purchase_price": "سعر الشراء", "sale_price": "سعر البيع",
+    "costing_method": "طريقة تقييم التكلفة", "min_stock": "حد إعادة الطلب",
+    "track_expiry": "تتبع الصلاحية", "is_active": "نشط", "created_at": "تاريخ الإنشاء",
+    "product": "الصنف", "warehouse": "المخزن", "location": "موقع التخزين",
+    "expiry_date": "تاريخ الصلاحية", "quantity": "الكمية", "inventory_value": "قيمة المخزون",
+    "average_cost": "متوسط التكلفة", "updated_at": "آخر تحديث",
+    "movement_number": "رقم الحركة", "movement_type": "نوع الحركة",
+    "adjustment_reason": "سبب التسوية", "movement_date": "تاريخ الحركة",
+    "source_warehouse": "مخزن المصدر", "destination_warehouse": "مخزن الوجهة",
+    "status": "الحالة", "notes": "ملاحظات", "posted_at": "تاريخ الترحيل",
+    "customer_type": "نوع العميل", "supplier_type": "نوع المورد",
+    "tax_number": "الرقم الضريبي", "phone": "الهاتف", "mobile": "المحمول",
+    "email": "البريد الإلكتروني", "address": "العنوان", "credit_limit": "حد الائتمان",
+    "payment_terms_days": "مدة السداد بالأيام", "default_discount_percent": "نسبة الخصم الافتراضية",
+    "bank_name": "اسم البنك", "account_number": "رقم الحساب", "iban": "رقم IBAN",
+    "kind": "نوع الحساب", "currency_code": "رمز العملة", "opening_balance": "الرصيد الافتتاحي",
+    "branch": "الفرع", "full_name_ar": "اسم الموظف بالعربية",
+    "full_name_en": "اسم الموظف بالإنجليزية", "national_id": "الرقم القومي",
+    "insurance_number": "الرقم التأميني", "department": "الإدارة", "position": "الوظيفة",
+    "contract_type": "نوع العقد", "hire_date": "تاريخ التعيين",
+    "contract_end_date": "تاريخ نهاية العقد", "termination_date": "تاريخ انتهاء الخدمة",
+    "basic_salary": "الراتب الأساسي", "currency": "العملة",
+    "payment_method": "طريقة صرف الراتب", "bank_account": "الحساب البنكي",
+    "cost_center": "مركز التكلفة",
+}
+
+
 def _field_label(model, name):
     field = model._meta.get_field(name)
-    return str(field.verbose_name)
+    return FIELD_LABELS.get(name, str(field.verbose_name))
 
 
 def _queryset_for(resource, company_id, user):
