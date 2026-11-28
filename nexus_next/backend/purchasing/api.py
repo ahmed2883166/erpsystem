@@ -84,6 +84,7 @@ class BranchPurchasePolicyViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
     serializer_class = BranchPurchasePolicySerializer
     queryset = BranchPurchasePolicy.objects.select_related("branch", "branch__company").prefetch_related("allowed_suppliers")
+    filterset_fields = ("branch", "branch__company")
 
     def get_queryset(self):
         companies = accessible_companies(self.request.user)
