@@ -61,8 +61,7 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
         return str(sum((row.amount for row in obj.allocations.all()), Decimal("0")))
 
     def get_unallocated_amount(self, obj):
-        from sales.customer_refund_services import _available_advance
-        return str(_available_advance(obj, obj.receipt_date if obj.status == CustomerReceiptBatch.Status.DRAFT else __import__("django.utils.timezone", fromlist=["localdate"]).localdate()))
+        return str(obj.unallocated_amount)
 
     def validate(self, attrs):
         company = attrs.get("company")
