@@ -389,13 +389,137 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
 
         
-        # Continue the same company journey into sales: the purchased and
-        # returned stock must be available for delivery, invoicing and collection.
-        sales_date = return_reversal_date + timedelta(days=1)
+        # Continue the same company journey across branches. The source branch
+        # purchases and pays for the goods; a separately authorized destination
+        # branch receives the transfer in two partial receipts and sells from its
+        # own warehouse. This joins the previously isolated branch controls to the
+        # purchasing, stock valuation, sales, treasury and GL journey.
+        destination_branch = Branch.objects.create(
+            company=self.company, code="REQE2E-DEST", name_ar="فرع الاستلام والبيع",
+        )
+        destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=destination_branch,
+            code="REQE2E-WH-DEST", name_ar="مخزن فرع الاستلام والبيع",
+        )
+        sender = get_user_model().objects.create_user(
+            username="requisition-e2e-sender", password="test-password",
+        )
+        sender_membership = CompanyMembership.objects.create(
+            user=sender, company=self.company, role="accountant", all_branches=False,
+        )
+        sender_membership.branches.add(self.branch)
+        receiver = get_user_model().objects.create_user(
+            username="requisition-e2e-receiver", password="test-password",
+        )
+        receiver_membership = CompanyMembership.objects.create(
+            user=receiver, company=self.company, role="accountant", all_branches=False,
+        )
+        receiver_membership.branches.add(destination_branch)
+
+        transfer_date = return_reversal_date + timedelta(days=1)
+        self.client.force_authenticate(sender)
+        transfer = self.client.post("/api/inventory/transfers/", {
+            "company": self.company.pk,
+            "transfer_number": "REQE2E-XFER-001",
+            "transfer_date": transfer_date.isoformat(),
+            "source_warehouse": self.warehouse.pk,
+            "destination_warehouse": destination_warehouse.pk,
+            "lines": [{"product": self.product.pk, "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        transfer_id = transfer.data["id"]
+        transfer_line_id = transfer.data["lines"][0]["id"]
+        dispatched = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/dispatch/", {}, format="json",
+        )
+        self.assertEqual(dispatched.status_code, 200, dispatched.data)
+
+        self.client.force_authenticate(receiver)
+        receiver_cannot_dispatch = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/dispatch/", {}, format="json",
+        )
+        self.assertEqual(receiver_cannot_dispatch.status_code, 403, receiver_cannot_dispatch.data)
+        first_receipt_date = transfer_date + timedelta(days=1)
+        first_receipt = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/receive/",
+            {
+                "receipt_date": first_receipt_date.isoformat(),
+                "lines": [{"transfer_line": transfer_line_id, "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(first_receipt.status_code, 201, first_receipt.data)
+        self.assertEqual(first_receipt.data["receipt_number"], f"TR-{transfer_id}-R1")
+        transit_warehouse = Warehouse.objects.get(company=self.company, is_transit=True)
+        transit_after_partial = StockBalance.objects.get(
+            product=self.product, warehouse=transit_warehouse,
+        )
+        destination_after_partial = StockBalance.objects.get(
+            product=self.product, warehouse=destination_warehouse,
+        )
+        self.assertEqual(transit_after_partial.quantity, Decimal("1.0000"))
+        self.assertEqual(destination_after_partial.quantity, Decimal("1.0000"))
+
+        self.client.force_authenticate(sender)
+        sender_cannot_receive = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/receive/",
+            {
+                "receipt_date": (first_receipt_date + timedelta(days=1)).isoformat(),
+                "lines": [{"transfer_line": transfer_line_id, "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(sender_cannot_receive.status_code, 403, sender_cannot_receive.data)
+
+        self.client.force_authenticate(receiver)
+        second_receipt_date = first_receipt_date + timedelta(days=1)
+        second_receipt = self.client.post(
+            f"/api/inventory/transfers/{transfer_id}/receive/",
+            {
+                "receipt_date": second_receipt_date.isoformat(),
+                "lines": [{"transfer_line": transfer_line_id, "quantity": "1"}],
+            },
+            format="json",
+        )
+        self.assertEqual(second_receipt.status_code, 201, second_receipt.data)
+        self.assertEqual(second_receipt.data["receipt_number"], f"TR-{transfer_id}-R2")
+        transfer_detail = self.client.get(f"/api/inventory/transfers/{transfer_id}/")
+        self.assertEqual(transfer_detail.status_code, 200, transfer_detail.data)
+        self.assertEqual(transfer_detail.data["status"], "received")
+        transit_after_full_receipt = StockBalance.objects.get(
+            product=self.product, warehouse=transit_warehouse,
+        )
+        destination_after_full_receipt = StockBalance.objects.get(
+            product=self.product, warehouse=destination_warehouse,
+        )
+        source_after_transfer = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+        )
+        self.assertEqual(transit_after_full_receipt.quantity, Decimal("0.0000"))
+        self.assertEqual(transit_after_full_receipt.inventory_value, Decimal("0.0000"))
+        self.assertEqual(destination_after_full_receipt.quantity, Decimal("2.0000"))
+        self.assertEqual(destination_after_full_receipt.inventory_value, Decimal("200.0000"))
+        self.assertEqual(source_after_transfer.quantity, Decimal("0.0000"))
+        self.assertEqual(source_after_transfer.inventory_value, Decimal("0.0000"))
+
+        # A bank ledger is created for the destination branch so customer
+        # collection is also tested against the receiving branch's own treasury.
+        destination_bank_account = ChartOfAccount.objects.create(
+            company=self.company, code="1101", name_ar="بنك فرع الاستلام",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=destination_branch,
+            account=destination_bank_account, kind=TreasuryAccount.Kind.BANK,
+            code="BANK-REQE2E-DEST", name_ar="بنك فرع الاستلام",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
+
+        sales_date = second_receipt_date + timedelta(days=1)
         delivery = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk,
             "customer": self.customer.pk,
-            "warehouse": self.warehouse.pk,
+            "warehouse": destination_warehouse.pk,
             "delivery_number": "SALE-E2E-DEL-001",
             "delivery_date": sales_date.isoformat(),
             "lines": [{"product": self.product.pk, "quantity": "1"}],
@@ -436,7 +560,7 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
             "receipt_number": "SALE-E2E-RC-001",
             "receipt_date": receipt_date.isoformat(),
             "method": "bank",
-            "payment_account": self.bank.pk,
+            "payment_account": destination_bank_account.pk,
             "amount": "171",
         }, format="json")
         self.assertEqual(customer_receipt.status_code, 201, customer_receipt.data)
@@ -446,9 +570,31 @@ class PurchasingRequisitionToSettlementE2ETests(APITestCase):
         )
         self.assertEqual(posted_customer_receipt.status_code, 200, posted_customer_receipt.data)
 
-        final_stock = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
-        self.assertEqual(final_stock.quantity, Decimal("1.0000"))
-        self.assertEqual(final_stock.inventory_value, Decimal("100.0000"))
+        # Use the company-wide buyer membership for final cross-branch
+        # reconciliation; the receiver remains branch-restricted for operations.
+        self.client.force_authenticate(self.buyer)
+
+        final_source_stock = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        final_destination_stock = StockBalance.objects.get(
+            product=self.product, warehouse=destination_warehouse,
+        )
+        self.assertEqual(final_source_stock.quantity, Decimal("0.0000"))
+        self.assertEqual(final_source_stock.inventory_value, Decimal("0.0000"))
+        self.assertEqual(final_destination_stock.quantity, Decimal("1.0000"))
+        self.assertEqual(final_destination_stock.inventory_value, Decimal("100.0000"))
+        self.assertEqual(
+            final_source_stock.inventory_value + final_destination_stock.inventory_value,
+            Decimal("100.0000"),
+        )
+
+        clearing_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING,
+        ).account
+        clearing_totals = JournalLine.objects.filter(
+            entry__company=self.company, entry__status=JournalEntry.Status.POSTED,
+            account=clearing_account,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(clearing_totals["debit"], clearing_totals["credit"])
 
         final_date = receipt_date
         integrated_reconciliation = self.client.get(
