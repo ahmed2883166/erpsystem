@@ -296,6 +296,15 @@ class TreasuryBaseViewSet(viewsets.ModelViewSet):
         """تطبيق نطاق الشركات والفروع المسموح للمستخدم بالوصول إليها."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+    def _check_treasury_account_scope(self, account, company_id):
+        """منع استخدام حساب خزينة خارج نطاق الفروع المصرح للمستخدم بها."""
+        if account.company_id != company_id:
+            raise ValidationError("حساب الخزينة لا يتبع الشركة المحددة.")
+        if account.branch_id:
+            if not can_access_branch(self.request.user, account.branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع حساب الخزينة.")
+        elif not has_company_wide_branch_access(self.request.user, company_id):
+            raise PermissionDenied("استخدام حساب خزينة عام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
 
 
 class TreasuryAccountViewSet(TreasuryBaseViewSet):
@@ -1033,6 +1042,9 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         self._scope(data["company"].pk); self._write(data["company"].pk)
         if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع.")
+        self._check_treasury_account_scope(data["source_account"], data["company"].pk)
+        if data.get("destination_account"):
+            self._check_treasury_account_scope(data["destination_account"], data["company"].pk)
         doc = serializer.save(created_by=self.request.user)
         refresh_financial_approval(
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
@@ -1056,6 +1068,11 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         self._write(company.pk)
         if not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية نقل مستند الخزينة إلى هذا الفرع.")
+        source_account = serializer.validated_data.get("source_account", instance.source_account)
+        destination_account = serializer.validated_data.get("destination_account", instance.destination_account)
+        self._check_treasury_account_scope(source_account, company.pk)
+        if destination_account:
+            self._check_treasury_account_scope(destination_account, company.pk)
         doc = serializer.save()
         refresh_financial_approval(
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
@@ -1747,6 +1764,7 @@ class TreasuryChequeViewSet(TreasuryBaseViewSet):
         self._write(data["company"].pk)
         if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الشيك.")
+        self._check_treasury_account_scope(data["bank_account"], data["company"].pk)
         direction = data["direction"]
         status_value = TreasuryCheque.Status.RECEIVED if direction == TreasuryCheque.Direction.INCOMING else TreasuryCheque.Status.ISSUED
         serializer.save(created_by=self.request.user, status=status_value)
@@ -1764,10 +1782,7 @@ class TreasuryChequeViewSet(TreasuryBaseViewSet):
         self._write(company.pk)
         if not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الشيك المحدد.")
-        if bank.branch_id and not can_access_branch(self.request.user, bank.branch_id, company.pk):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي المحدد.")
-        if not bank.branch_id and not has_company_wide_branch_access(self.request.user, company.pk):
-            raise PermissionDenied("استخدام حساب بنكي عام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
+        self._check_treasury_account_scope(bank, company.pk)
         if "status" in serializer.validated_data or "treasury_transaction" in serializer.validated_data:
             raise ValidationError("تغيير حالة الشيك أو حركته يتم من إجراءات دورة الشيك وليس بالتعديل المباشر.")
         serializer.save()
@@ -2191,6 +2206,8 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         self._write(company.pk)
         if not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية إدارة العهدة في هذا الفرع.")
+        self._check_treasury_account_scope(serializer.validated_data["funding_account"], company.pk)
+        self._check_treasury_account_scope(serializer.validated_data["petty_cash_account"], company.pk)
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -2205,10 +2222,7 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع العهدة المحدد.")
         for field in ("funding_account", "petty_cash_account"):
             account = serializer.validated_data.get(field, getattr(fund, field))
-            if account.branch_id and not can_access_branch(self.request.user, account.branch_id, company.pk):
-                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع حساب الخزينة المرتبط بالعهدة.")
-            if not account.branch_id and not has_company_wide_branch_access(self.request.user, company.pk):
-                raise PermissionDenied("استخدام حساب خزينة عام للعهدة يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
+            self._check_treasury_account_scope(account, company.pk)
         if "status" in serializer.validated_data and serializer.validated_data["status"] == PettyCashFund.Status.CLOSED:
             raise ValidationError("استخدم إجراء إغلاق العهدة لتأكيد النقدية الفعلية ورد الرصيد المتبقي للخزينة.")
         if fund.transfers.exists() or fund.expenses.exists():
