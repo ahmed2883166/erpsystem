@@ -125,9 +125,12 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
         approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
         self._manager(approval)
+        decision_note = str(request.data.get("note", "")).strip()
+        if approval.requested_credit_limit is not None and not decision_note:
+            raise ValidationError({"note": "سبب الاستثناء الائتماني مطلوب لتوثيق قرار المدير."})
         approval.status = SalesInvoiceApproval.Status.APPROVED
         approval.decided_by = request.user
-        approval.decision_note = str(request.data.get("note", "")).strip()[:500]
+        approval.decision_note = decision_note[:500]
         approval.save()
         return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
 
