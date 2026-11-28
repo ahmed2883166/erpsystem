@@ -16,7 +16,7 @@ from companies.access import (
 )
 from customers.models import Customer
 from hr.models import Employee
-from inventory.models import Product
+from inventory.models import Product, StockBalance, StockMovement
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
 
@@ -28,6 +28,16 @@ EXPORTS = {
         "fields": ("code", "barcode", "name_ar", "name_en", "product_type", "stock_class",
                    "category", "unit", "purchase_price", "sale_price", "costing_method",
                    "min_stock", "track_expiry", "is_active", "created_at"),
+    },
+    "inventory_balances": {
+        "model": StockBalance,
+        "label": "المخزون - الأرصدة",
+        "fields": ("product", "warehouse", "location", "expiry_date", "quantity", "inventory_value", "average_cost", "updated_at"),
+    },
+    "inventory_movements": {
+        "model": StockMovement,
+        "label": "المخزون - الحركات",
+        "fields": ("movement_number", "movement_type", "adjustment_reason", "movement_date", "source_warehouse", "destination_warehouse", "status", "notes", "posted_at", "created_at"),
     },
     "customers": {
         "model": Customer,
@@ -68,7 +78,16 @@ def _field_label(model, name):
 
 def _queryset_for(resource, company_id, user):
     spec = EXPORTS[resource]
-    qs = spec["model"].objects.filter(company_id=company_id)
+    if resource == "inventory_balances":
+        qs = spec["model"].objects.filter(warehouse__company_id=company_id)
+    else:
+        qs = spec["model"].objects.filter(company_id=company_id)
+    if resource == "inventory_movements":
+        from django.db.models import Q
+        branches = accessible_branches(user, company_id)
+        qs = qs.filter(Q(source_warehouse__branch__in=branches) | Q(destination_warehouse__branch__in=branches))
+    if resource == "inventory_balances":
+        qs = qs.filter(warehouse__branch__in=accessible_branches(user, company_id))
     if resource == "employees":
         qs = qs.filter(branch__in=accessible_branches(user, company_id))
     elif resource == "bank":
@@ -126,11 +145,17 @@ class CustomExcelExportView(APIView):
         qs = _queryset_for(resource, company_id, request.user)
         branch_id = request.query_params.get("branch")
         if branch_id:
-            if resource not in ("bank", "employees"):
+            if resource not in ("bank", "employees", "inventory_balances", "inventory_movements"):
                 raise ValidationError({"branch": "تصفية الفرع غير متاحة لهذا القسم."})
             if not accessible_branches(request.user, company_id).filter(pk=branch_id).exists():
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
-            qs = qs.filter(branch_id=branch_id)
+            if resource == "inventory_balances":
+                qs = qs.filter(warehouse__branch_id=branch_id)
+            elif resource == "inventory_movements":
+                from django.db.models import Q
+                qs = qs.filter(Q(source_warehouse__branch_id=branch_id) | Q(destination_warehouse__branch_id=branch_id))
+            else:
+                qs = qs.filter(branch_id=branch_id)
 
         total = qs.count()
         headers = [_field_label(model, field) for field in selected]
