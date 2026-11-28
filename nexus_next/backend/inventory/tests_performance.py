@@ -1,5 +1,6 @@
 import os
 import time
+import unittest
 from datetime import date
 from decimal import Decimal
 
@@ -12,7 +13,7 @@ from companies.models import Branch, Company, CompanyMembership, Currency
 from inventory.models import Product, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 
 
-@__import__("unittest").skipUnless(
+@unittest.skipUnless(
     os.getenv("RUN_INVENTORY_500K_BENCHMARK") == "1",
     "Set RUN_INVENTORY_500K_BENCHMARK=1 to run the 500k inventory benchmark.",
 )
