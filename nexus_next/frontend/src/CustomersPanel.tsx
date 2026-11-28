@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney } from "./formatters";
+import CustomExcelExportButton from "./CustomExcelExportButton";
 import { api, inventoryApi, salesApi, type Customer, type CustomerStatement, type CustomerDiscountRule, type Product, type InventoryCategory } from "./api";
 
 type Props = { companyId: number | null };
@@ -185,6 +186,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       <div className="work-panel-head">
         <div><h2>سجل العملاء</h2><p>بيانات العملاء وحدود الائتمان وشروط السداد للشركة المحددة.</p></div>
         <div className="table-actions">
+          <CustomExcelExportButton resource="customers" companyId={companyId} />
           <button className="subtle-button" type="button" disabled={!companyId} onClick={() => setShowDiscountRules(value => !value)}>قواعد الخصم</button>
           <button className="primary-button" type="button" disabled={!companyId} onClick={() => { if(showForm){setShowForm(false);resetForm();}else{resetForm();setShowForm(true);} }}>
             <span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة عميل"}
